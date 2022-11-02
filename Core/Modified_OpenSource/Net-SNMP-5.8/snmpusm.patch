@@ -1,0 +1,170 @@
+--- /root/Downloads/net-snmp-5.8/snmplib/snmpusm.c	2018-07-16 10:33:40.000000000 +0530
++++ net-snmp-5.8/snmplib/snmpusm.c	2019-07-31 18:34:30.505758342 +0530
+@@ -78,6 +78,8 @@
+ #include <net-snmp/library/snmpusm.h>
+ #include <net-snmp/library/transform_oids.h>
+ #include <net-snmp/library/snmp_enum.h>
++#include <fcntl.h>
++#include <errno.h>
+ 
+ netsnmp_feature_child_of(usm_all, libnetsnmp)
+ netsnmp_feature_child_of(usm_support, usm_all)
+@@ -2379,6 +2381,87 @@
+                               parms->sess, parms->msg_flags);
+ }
+ 
++typedef struct{
++	char User[17];
++	char ipaddr[16];
++	int ErrCode;
++}PAMtoIPMIReq_T;
++
++typedef struct{
++	int ErrCode;
++}IPMItoPAMRes_T;
++
++#define USR_ACT_VERIFY_REQ_PIPE        "/var/pipe/usr_act_verify_req"
++#define USR_ACT_VERIFY_RES_PIPE        "/var/pipe/usr_act_verify_res"
++int userlockstatus(char *username, char *BMC_IP, int authstatus)
++{
++	int cmdpipe=-1,replypipe=-1,ret=0;
++	int pam_err = -1;
++	PAMtoIPMIReq_T SendCmd;
++	IPMItoPAMRes_T RecvdCmd;
++
++	if ((-1 == (cmdpipe = open(USR_ACT_VERIFY_REQ_PIPE, O_WRONLY))) && (errno != EINTR))
++	{
++		DEBUGMSGTL(("USM","Error while opening user account verification request pipe..."));
++		return -1;
++	}
++	if ((-1 == (replypipe = open(USR_ACT_VERIFY_RES_PIPE, O_RDONLY))) && (errno != EINTR))
++	{
++		DEBUGMSGTL(("USM","Error while opening user account verification response pipe..."));
++		close(cmdpipe);
++		return -1;
++	}
++	
++	memset(&SendCmd, 0, sizeof(SendCmd));
++	
++	ret = snprintf(SendCmd.User,sizeof(SendCmd.User),"%s",username);
++	if(ret < 0 || ret >= sizeof(SendCmd.User))
++	{
++		DEBUGMSGTL(("USM","Buffer Overflow"));
++		pam_err = -1;
++		goto pamerr;
++	}
++	if(*BMC_IP != '\0')	
++		memcpy(SendCmd.ipaddr,BMC_IP,sizeof(SendCmd.ipaddr));
++	else
++		memset(SendCmd.ipaddr,0,sizeof(SendCmd.ipaddr));
++
++	SendCmd.ErrCode = authstatus;
++	
++	DEBUGMSGTL(("USM","Sending Command to IPMI"));
++			
++	ret=write(cmdpipe, &SendCmd,sizeof(SendCmd));
++	if(ret<=0)
++	{
++		DEBUGMSGTL(("USM","Error while writting to pipe"));
++		pam_err = -1;
++		goto pamerr;
++	}
++	
++	DEBUGMSGTL(("USM","Receiving Command from IPMI"));
++	
++	memset(&RecvdCmd, 0, sizeof(RecvdCmd));
++		
++	ret = read (replypipe, &RecvdCmd, sizeof (RecvdCmd));
++	if (ret <= 0)
++	{
++		DEBUGMSGTL(("USM","Error reading from pipe"));
++		pam_err = -1;
++		goto pamerr;
++	}
++	if(RecvdCmd.ErrCode != 0)
++	{
++		pam_err = -1;
++		goto pamerr;
++	}
++	pam_err = 0;
++
++    pamerr:
++    close(cmdpipe);
++    close(replypipe);
++    return pam_err;
++}
++
+ /*******************************************************************-o-******
+  * usm_process_in_msg
+  *
+@@ -2445,11 +2528,12 @@
+     u_char          type_value;
+     u_char         *end_of_overhead = NULL;
+     int             error;
+-    int             rc = 0;
++    int             rc = 0,status = 0;
+     struct usmStateReference **secStateRef =
+         (struct usmStateReference **) secStateRf;
+ 
+     struct usmUser *user;
++    char bmc_ip[16] = {0};
+ 
+ 
+     DEBUGMSGTL(("usm", "USM processing begun...\n"));
+@@ -2567,14 +2651,14 @@
+                                          (!sess)) ? 0 : 1)))
+         == NULL) {
+         DEBUGMSGTL(("usm", "Unknown User(%s)\n", secName));
+-        snmp_increment_statistic(STAT_USMSTATSUNKNOWNUSERNAMES);
+-        return SNMPERR_USM_UNKNOWNSECURITYNAME;
++        snmp_increment_statistic(STAT_USMSTATSWRONGDIGESTS);
++        return SNMPERR_USM_AUTHENTICATIONFAILURE;
+     }
+ 
+     /* ensure the user is active */
+     if (user->userStatus != RS_ACTIVE) {
+         DEBUGMSGTL(("usm", "Attempt to use an inactive user.\n"));
+-        return SNMPERR_USM_UNKNOWNSECURITYNAME;
++        return SNMPERR_USM_AUTHENTICATIONFAILURE;
+     }
+ 
+     /*
+@@ -2592,6 +2676,14 @@
+         return SNMPERR_USM_GENERICERROR;
+     }
+ 
++    if(inet_pton(AF_INET,sess->localname,bmc_ip) != 1)
++    {
++	if(inet_pton(AF_INET6,sess->localname,bmc_ip) != 1)
++	{
++	    memset(bmc_ip,0,sizeof(bmc_ip));
++	}
++    }
++
+     /*
+      * Check the authentication credentials of the message.
+      */
+@@ -2604,12 +2696,19 @@
+             != SNMP_ERR_NOERROR) {
+             DEBUGMSGTL(("usm", "Verification failed.\n"));
+             snmp_increment_statistic(STAT_USMSTATSWRONGDIGESTS);
+-	    snmp_log(LOG_WARNING, "Authentication failed for %s\n",
+-				user->name);
++	    //snmp_log(LOG_WARNING, "Authentication failed for %s\n",user->name);
++            userlockstatus(user->name,bmc_ip,0x80);
+             return SNMPERR_USM_AUTHENTICATIONFAILURE;
+         }
+-
+-        DEBUGMSGTL(("usm", "Verification succeeded.\n"));
++	status = userlockstatus(user->name,bmc_ip,0);
++        if(status != 0)
++	{
++	    DEBUGMSGTL(("usm", "User is Locked.\n"));
++            snmp_increment_statistic(STAT_USMSTATSWRONGDIGESTS);
++	    return SNMPERR_USM_AUTHENTICATIONFAILURE;
++	}
++	else
++	    DEBUGMSGTL(("usm", "Verification succeeded.\n"));
+     }
+ 
+ 

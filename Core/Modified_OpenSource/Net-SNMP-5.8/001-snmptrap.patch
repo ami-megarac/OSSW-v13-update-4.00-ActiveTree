@@ -1,0 +1,12 @@
+--- /root/Downloads/net-snmp-5.8/apps/snmptrap.c	2018-07-16 14:33:40.000000000 +0000
++++ net-snmp/apps/snmptrap.c	2022-02-22 07:20:46.784058800 +0000
+@@ -214,6 +214,9 @@
+             session.engineBoots = 1;
+         if (session.engineTime == 0)    /* not really correct, */
+             session.engineTime = get_uptime();  /* but it'll work. Sort of. */
++
++	set_enginetime(session.securityEngineID, session.securityEngineIDLen,session.engineBoots, session.engineTime, TRUE);
++
+     }
+ 
+     ss = snmp_add(&session,

@@ -1,0 +1,33 @@
+--- /root/Downloads/net-snmp-5.8/agent/snmp_agent.c	2018-07-16 10:33:40.000000000 +0530
++++ net-snmp-5.8/agent/snmp_agent.c	2019-07-31 15:46:56.000000000 +0530
+@@ -1038,9 +1038,11 @@
+                            void *transport_data, int transport_data_length)
+ {
+     char           *addr_string = NULL;
++    char connection[12],localname[56],peername[56];
+ #ifdef  NETSNMP_USE_LIBWRAP
+     char *tcpudpaddr = NULL, *name;
+     short not_log_connection;
++    int port;
+ 
+     name = netsnmp_ds_get_string(NETSNMP_DS_LIBRARY_ID,
+                                  NETSNMP_DS_LIB_APPTYPE);
+@@ -1083,10 +1085,16 @@
+         xp = strstr(sbuf, "]");
+         if (xp)
+             *xp = '\0';
+- 
++	memset(localname,0,sizeof(localname));
++	memset(session->localname,0,sizeof(localname));
++	if(strstr("IPV6",addr_string) == NULL)
++	{
++	    sscanf(addr_string,"%[^:]: [%[^]]]:%d->[%[^]]]:%d",connection,peername,&port,localname,&port);
++            strncpy(session->localname,localname,strlen(localname));
++	}
+         if (hosts_ctl(name, STRING_UNKNOWN, sbuf, STRING_UNKNOWN)) {
+             if (!not_log_connection) {
+-                snmp_log(allow_severity, "Connection from %s\n", addr_string);
++                //snmp_log(allow_severity, "Connection from %s\n", addr_string);
+             }
+         } else {
+             snmp_log(deny_severity, "Connection from %s REFUSED\n",

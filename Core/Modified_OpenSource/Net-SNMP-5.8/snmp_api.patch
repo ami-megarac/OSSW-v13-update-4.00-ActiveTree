@@ -1,0 +1,57 @@
+--- /root/Downloads/net-snmp-5.8/snmplib/snmp_api.c	2018-07-16 10:33:40.000000000 +0530
++++ net-snmp/snmplib/snmp_api.c	2019-07-31 11:39:25.244710420 +0530
+@@ -1118,12 +1118,22 @@
+     session->securityName = NULL;
+     session->securityAuthProto = NULL;
+     session->securityPrivProto = NULL;
+-    /*
++
++    if(session->localname == NULL)
++    {
++	session->localname = (char *)malloc(56 * sizeof(char));
++	if(session->localname == NULL)
++	{
++	    snmp_sess_close(slp);
++            in_session->s_snmp_errno = SNMPERR_MALLOC;
++            return (NULL);
++	}
++    }
++     /*
+      * session now points to the new structure that still contains pointers to
+      * data allocated elsewhere.  Some of this data is copied to space malloc'd
+      * here, and the pointer replaced with the new one.
+      */
+-
+     if (in_session->peername != NULL) {
+         session->peername =
+             netsnmp_strdup_and_null((u_char*)in_session->peername,
+@@ -1626,7 +1636,6 @@
+ 
+     {
+         char *clientaddr_save = NULL;
+-
+         if (NULL != in_session->localname) {
+             clientaddr_save =
+                 netsnmp_ds_get_string(NETSNMP_DS_LIBRARY_ID,
+@@ -3970,8 +3979,8 @@
+     DEBUGDUMPSECTION("recv", "ScopedPDU");
+     data = snmpv3_scopedPDU_parse(pdu, cp, length);
+     if (data == NULL) {
+-        snmp_log(LOG_WARNING, "security service %ld error parsing ScopedPDU\n",
+-                 msg_sec_model);
++        //snmp_log(LOG_WARNING, "security service %ld error parsing ScopedPDU\n",
++                 //msg_sec_model);
+         ERROR_MSG("error parsing PDU");
+         snmp_increment_statistic(STAT_SNMPINASNPARSEERRS);
+         DEBUGINDENTADD(-4);
+@@ -3996,8 +4005,8 @@
+     }
+ 
+     if (ret != SNMPERR_SUCCESS) {
+-        snmp_log(LOG_WARNING, "security service %ld error parsing ScopedPDU\n",
+-                 msg_sec_model);
++        //snmp_log(LOG_WARNING, "security service %ld error parsing ScopedPDU\n",
++                 //msg_sec_model);
+         ERROR_MSG("error parsing PDU");
+         snmp_increment_statistic(STAT_SNMPINASNPARSEERRS);
+         SNMP_FREE(mallocbuf);
