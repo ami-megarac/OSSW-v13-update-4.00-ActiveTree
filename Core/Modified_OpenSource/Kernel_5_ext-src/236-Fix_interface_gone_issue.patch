@@ -1,0 +1,46 @@
+diff -Naur linux_ori/net/ncsi/ncsi-manage.c linux/net/ncsi/ncsi-manage.c
+--- linux_ori/net/ncsi/ncsi-manage.c	2022-09-01 11:11:21.065404439 +0800
++++ linux/net/ncsi/ncsi-manage.c	2022-09-01 11:11:21.065404439 +0800
+@@ -1631,11 +1631,11 @@
+ 	unsigned long flags;
+ 
+ 	nc = ndp->aen_stat.nc ;	
+-	
++
+ 	//Make sure NCSI command able to send
+ 	netif_carrier_on(ndp->ndev.dev);	
+ 	msleep(100);
+-		
++
+ 		if (!ndp->multi_package && !nc->package->multi_channel) {
+ 			if (ndp->aen_stat.had_link) {
+ 				ndp->flags |= NCSI_DEV_RESHUFFLE;
+@@ -1973,9 +1973,16 @@
+ int ncsi_start_dev(struct ncsi_dev *nd)
+ {
+ 	struct ncsi_dev_priv *ndp = TO_NCSI_DEV_PRIV(nd);
++
++	if(InitComplete) {
++		netdev_dbg(ndp->ndev.dev, "NCSI device state = %u\n", nd->state);
++		netdev_dbg(ndp->ndev.dev, "NCSI device flag = %u\n", ndp->flags);
++		ncsi_reset_dev(nd);
++		return 0;
++	} // if
+ 	
+ 	if (nd->state != ncsi_dev_state_registered &&
+-	    nd->state != ncsi_dev_state_functional)
++		nd->state != ncsi_dev_state_functional)
+ 		return -ENOTTY;
+ 
+ 	if (!(ndp->flags & NCSI_DEV_PROBED)) {
+@@ -1998,6 +2005,10 @@
+ 	int old_state;
+ 	unsigned long flags;
+ 	
++	if(InitComplete) {
++		return;
++	} // if
++
+ 	/* Stop the channel monitor on any active channels. Don't reset the
+ 	 * channel state so we know which were active when ncsi_start_dev()
+ 	 * is next called.

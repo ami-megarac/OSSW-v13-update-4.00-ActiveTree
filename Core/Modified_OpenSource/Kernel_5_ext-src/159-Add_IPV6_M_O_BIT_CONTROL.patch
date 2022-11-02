@@ -1,0 +1,277 @@
+diff -Naur linux_ori/include/net/ndisc.h linux/include/net/ndisc.h
+--- linux_ori/include/net/ndisc.h	2022-05-31 11:27:07.812699736 +0800
++++ linux/include/net/ndisc.h	2022-05-31 11:30:34.724703340 +0800
+@@ -61,6 +61,11 @@
+ 
+ /* Set to 3 to get tracing... */
+ #define ND_DEBUG 1
++#define IPV6_STRING_ADDR_LEN 64
++#define MAX_CHANNEL    0x04
++#define DEFAULT_M_O_BIT_ENABLE 7
++#define ROUTER_LIFETIME_NOT_SET -1
++#define ROUTER_LIFETIME_EXPIRED -2
+ 
+ #define ND_PRINTK(val, level, fmt, ...)				\
+ do {								\
+@@ -106,6 +111,14 @@
+ 	__u8		nd_opt_len;
+ } __packed;
+ 
++typedef struct ipv6_m_o_bit_node {
++       char ifname[16];
++       int flag;
++	   char saddr[64];
++	   int source_lifetime;
++	   struct timer_list key_timer;
++} ipv6_m_o_bit_node_t;     
++
+ /* ND options */
+ struct ndisc_options {
+ 	struct nd_opt_hdr *nd_opt_array[__ND_OPT_ARRAY_MAX];
+@@ -450,6 +463,9 @@
+ 	return neigh;
+ }
+ 
++void ipv6_string_format(char *str_addr, struct in6_addr *saddr);
++int InitIfcNameTable(void);
++
+ int ndisc_init(void);
+ int ndisc_late_init(void);
+ 
+diff -Naur linux_ori/net/ipv6/ndisc.c linux/net/ipv6/ndisc.c
+--- linux_ori/net/ipv6/ndisc.c	2022-05-31 11:27:51.372700495 +0800
++++ linux/net/ipv6/ndisc.c	2022-05-31 11:32:40.436705529 +0800
+@@ -32,6 +32,7 @@
+ #include <linux/sockios.h>
+ #include <linux/sched.h>
+ #include <linux/net.h>
++#include <linux/netdevice.h>
+ #include <linux/in6.h>
+ #include <linux/route.h>
+ #include <linux/init.h>
+@@ -87,6 +88,77 @@
+ static void pndisc_redo(struct sk_buff *skb);
+ static int ndisc_is_multicast(const void *pkey);
+ 
++ipv6_m_o_bit_node_t Ifcnametable[MAX_CHANNEL] = {
++        {"eth0", DEFAULT_M_O_BIT_ENABLE, {0}, ROUTER_LIFETIME_NOT_SET},   
++        {{0}, 0, {0}, ROUTER_LIFETIME_NOT_SET},
++        {{0}, 0, {0}, ROUTER_LIFETIME_NOT_SET},
++        {{0}, 0, {0}, ROUTER_LIFETIME_NOT_SET},
++};
++
++static bool isInital = false;
++
++static void MOBit_Timer_Expires(struct timer_list* t) {
++	ipv6_m_o_bit_node_t *iface = from_timer(iface, t, key_timer);
++	int i = 0;
++	for (i = 0; i < MAX_CHANNEL; i++) {
++		if (strncmp(iface->ifname, Ifcnametable[i].ifname, sizeof(iface->ifname)) == 0) {
++			Ifcnametable[i].flag = DEFAULT_M_O_BIT_ENABLE;
++			memset(Ifcnametable[i].saddr, 0, sizeof(Ifcnametable[i].saddr));
++			Ifcnametable[i].source_lifetime = ROUTER_LIFETIME_EXPIRED;
++			del_timer(&Ifcnametable[i].key_timer);
++			break;
++		} // if
++	} // for
++	return ;
++}
++
++int InitIfcNameTable(void)
++{
++	int NIC_Count = 0, i = 0;
++	NIC_Count = CONFIG_SPX_FEATURE_GLOBAL_NIC_COUNT;
++
++	if(NIC_Count == 0x04)
++	{
++		ipv6_m_o_bit_node_t Ifctable [MAX_CHANNEL] =
++		{
++				{"eth0", DEFAULT_M_O_BIT_ENABLE, {0}, ROUTER_LIFETIME_NOT_SET},
++				{"eth1", DEFAULT_M_O_BIT_ENABLE, {0}, ROUTER_LIFETIME_NOT_SET},
++				{"eth2", DEFAULT_M_O_BIT_ENABLE, {0}, ROUTER_LIFETIME_NOT_SET},
++				{"eth3", DEFAULT_M_O_BIT_ENABLE, {0}, ROUTER_LIFETIME_NOT_SET},
++		};
++		memcpy(Ifcnametable,Ifctable,sizeof(Ifcnametable));
++	}
++	else if(NIC_Count == 0x03)
++	{
++		ipv6_m_o_bit_node_t Ifctable [MAX_CHANNEL] =
++		{
++				{"eth0", DEFAULT_M_O_BIT_ENABLE, {0}, ROUTER_LIFETIME_NOT_SET},
++				{"eth1", DEFAULT_M_O_BIT_ENABLE, {0}, ROUTER_LIFETIME_NOT_SET},
++				{"eth2", DEFAULT_M_O_BIT_ENABLE, {0}, ROUTER_LIFETIME_NOT_SET},
++				{"bond0",DEFAULT_M_O_BIT_ENABLE, {0}, ROUTER_LIFETIME_NOT_SET},
++		};
++		memcpy(Ifcnametable,Ifctable,sizeof(Ifcnametable));
++	}
++	else if(NIC_Count == 0x02)
++	{
++		ipv6_m_o_bit_node_t Ifctable [MAX_CHANNEL] =
++		{
++				{"eth0", DEFAULT_M_O_BIT_ENABLE, {0}, ROUTER_LIFETIME_NOT_SET},
++				{"eth1", DEFAULT_M_O_BIT_ENABLE, {0}, ROUTER_LIFETIME_NOT_SET},
++				{"bond0",DEFAULT_M_O_BIT_ENABLE, {0}, ROUTER_LIFETIME_NOT_SET},
++				{{0}, 0, {0}, ROUTER_LIFETIME_NOT_SET},
++		};
++		memcpy(Ifcnametable,Ifctable,sizeof(Ifcnametable));
++	}
++
++	for (i = 0 ;i < MAX_CHANNEL; i++) {
++		timer_setup(&Ifcnametable[i].key_timer, MOBit_Timer_Expires, 0);
++	} // for
++
++	isInital = true;
++	return 0;
++}
++
+ static const struct neigh_ops ndisc_generic_ops = {
+ 	.family =		AF_INET6,
+ 	.solicit =		ndisc_solicit,
+@@ -1216,9 +1288,13 @@
+ 	struct ndisc_options ndopts;
+ 	int optlen;
+ 	unsigned int pref = 0;
++	unsigned int tmp = 0;
++	int if_index = 0;
+ 	__u32 old_if_flags;
++	int retVal = 0, flag = 0;
++	char tmp_saddr[IPV6_STRING_ADDR_LEN];
+ 	bool send_ifinfo_notify = false;
+-
++	bool isFound = false;
+ 	__u8 *opt = (__u8 *)(ra_msg + 1);
+ 
+ 	optlen = (skb_tail_pointer(skb) - skb_transport_header(skb)) -
+@@ -1299,6 +1375,39 @@
+ 	if (old_if_flags != in6_dev->if_flags)
+ 		send_ifinfo_notify = true;
+ 
++	if (ntohs(ra_msg->icmph.icmp6_rt_lifetime) != 0) {
++		for(if_index = 0; if_index < MAX_CHANNEL; if_index++) {
++			if (strncmp(Ifcnametable[if_index].ifname, skb->dev->name, sizeof(Ifcnametable[if_index].ifname)) == 0) {
++				memset(tmp_saddr, 0, sizeof(tmp_saddr));
++				ipv6_string_format(tmp_saddr, &ipv6_hdr(skb)->saddr);
++				if ( strlen(Ifcnametable[if_index].saddr) == 0 || strncmp(tmp_saddr, Ifcnametable[if_index].saddr, sizeof(tmp_saddr)) == 0) {
++					del_timer(&Ifcnametable[if_index].key_timer);
++					tmp = in6_dev->if_flags & IF_RA_MANAGED;
++					flag = 0;
++					if ( tmp == IF_RA_MANAGED ) {
++						flag |= 0b10;
++					} // if
++					
++					tmp = in6_dev->if_flags & IF_RA_OTHERCONF;
++					if ( tmp == IF_RA_OTHERCONF ) {
++						flag |= 0b01;
++					} // if
++
++					memset(tmp_saddr, 0, sizeof(tmp_saddr));
++					ipv6_string_format(tmp_saddr, &ipv6_hdr(skb)->saddr);
++					retVal = snprintf(Ifcnametable[if_index].saddr, sizeof(Ifcnametable[if_index].saddr), "%s", tmp_saddr);
++					if (retVal >= sizeof(Ifcnametable[if_index].saddr) || retVal < 0) {
++						printk("Buffer overflow\n");
++					} // if
++
++					Ifcnametable[if_index].flag = flag;
++					Ifcnametable[if_index].source_lifetime = ntohs(ra_msg->icmph.icmp6_rt_lifetime);
++					mod_timer(&Ifcnametable[if_index].key_timer, Ifcnametable[if_index].source_lifetime *HZ +jiffies);
++				} // if
++			} // if
++		} // for
++	} // if
++
+ 	if (!in6_dev->cnf.accept_ra_defrtr) {
+ 		ND_PRINTK(2, info,
+ 			  "RA: %s, defrtr is false for dev: %s\n",
+@@ -1956,7 +2065,7 @@
+ int __init ndisc_init(void)
+ {
+ 	int err;
+-
++	InitIfcNameTable();
+ 	err = register_pernet_subsys(&ndisc_net_ops);
+ 	if (err)
+ 		return err;
+@@ -1999,3 +2108,16 @@
+ 	neigh_table_clear(NEIGH_ND_TABLE, &nd_tbl);
+ 	unregister_pernet_subsys(&ndisc_net_ops);
+ }
++
++void ipv6_string_format(char *str_addr, struct in6_addr *saddr) {
++	int retVal = 0;
++	retVal = snprintf(str_addr, IPV6_STRING_ADDR_LEN, "%x:%x:%x:%x:%x:%x:%x:%x", 
++			ntohs(saddr->in6_u.u6_addr16[0]),ntohs(saddr->in6_u.u6_addr16[1]),
++			ntohs(saddr->in6_u.u6_addr16[2]),ntohs(saddr->in6_u.u6_addr16[3]),
++			ntohs(saddr->in6_u.u6_addr16[4]),ntohs(saddr->in6_u.u6_addr16[5]),
++			ntohs(saddr->in6_u.u6_addr16[6]),ntohs(saddr->in6_u.u6_addr16[7]));
++
++	if (retVal >= IPV6_STRING_ADDR_LEN || retVal < 0) {
++		printk("Buffer overflow\n");
++	} // if
++}
+diff -Naur linux_ori/net/ipv6/proc.c linux/net/ipv6/proc.c
+--- linux_ori/net/ipv6/proc.c	2022-05-31 11:27:58.736700623 +0800
++++ linux/net/ipv6/proc.c	2022-05-30 17:04:58.995548139 +0800
+@@ -31,6 +31,8 @@
+ #define SNMP_MIB_MAX MAX4(UDP_MIB_MAX, TCP_MIB_MAX, \
+ 			IPSTATS_MIB_MAX, ICMP_MIB_MAX)
+ 
++extern ipv6_m_o_bit_node_t Ifcnametable[MAX_CHANNEL];
++
+ static int sockstat6_seq_show(struct seq_file *seq, void *v)
+ {
+ 	struct net *net = seq->private;
+@@ -49,6 +51,27 @@
+ 	return 0;
+ }
+ 
++static int mo_bits_seq_show(struct seq_file *seq, void *v)
++{
++	struct net *net = seq->private;
++	int i = 0;
++	for (i = 0; i < MAX_CHANNEL; i++) {
++		if (strlen(Ifcnametable[i].ifname) == 0) {
++			continue;
++		} // if
++
++		if (strlen(Ifcnametable[i].saddr) == 0) {
++			seq_printf(seq, "%s %d NULL %d\n", Ifcnametable[i].ifname, Ifcnametable[i].flag, Ifcnametable[i].source_lifetime);
++		} // if
++		else {
++			seq_printf(seq, "%s %d %s %d\n", Ifcnametable[i].ifname, Ifcnametable[i].flag, 
++						Ifcnametable[i].saddr, Ifcnametable[i].source_lifetime);
++		} // else
++	} // for
++
++	return 0;
++}
++
+ static const struct snmp_mib snmp6_ipstats_list[] = {
+ /* ipv6 mib according to RFC 2465 */
+ 	SNMP_MIB_ITEM("Ip6InReceives", IPSTATS_MIB_INPKTS),
+@@ -282,12 +305,18 @@
+ 			snmp6_seq_show, NULL))
+ 		goto proc_snmp6_fail;
+ 
++	if (!proc_create_net_single("m_o_bits", 0444, net->proc_net,
++			mo_bits_seq_show, NULL))
++		goto proc_mo_fail;
++	
+ 	net->mib.proc_net_devsnmp6 = proc_mkdir("dev_snmp6", net->proc_net);
+ 	if (!net->mib.proc_net_devsnmp6)
+ 		goto proc_dev_snmp6_fail;
+ 	return 0;
+ 
+ proc_dev_snmp6_fail:
++	remove_proc_entry("m_o_bits", net->proc_net);
++proc_mo_fail:
+ 	remove_proc_entry("snmp6", net->proc_net);
+ proc_snmp6_fail:
+ 	remove_proc_entry("sockstat6", net->proc_net);
+@@ -299,6 +328,7 @@
+ 	remove_proc_entry("sockstat6", net->proc_net);
+ 	remove_proc_entry("dev_snmp6", net->proc_net);
+ 	remove_proc_entry("snmp6", net->proc_net);
++	remove_proc_entry("m_o_bits", net->proc_net);
+ }
+ 
+ static struct pernet_operations ipv6_proc_ops = {

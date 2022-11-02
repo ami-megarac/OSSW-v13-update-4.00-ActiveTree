@@ -1,0 +1,11 @@
+--- linux/drivers/usb/gadget/function/f_mass_storage.c	2022-06-13 17:59:38.268607000 +0800
++++ linux_new/drivers/usb/gadget/function/f_mass_storage.c	2022-06-13 15:28:43.396369000 +0800
+@@ -1936,6 +1936,8 @@
+ 		pAMI_media_event_status_priv->MediaEventCode = MEDIA_EVENT_ID_EJECT_REQUEST;
+ 		pAMI_media_event_status_priv->MediaStatus = MEDIA_PRESENT;
+ 	} else if (MediaStatus == MEDIA_PRESENT) {
++		pAMI_media_event_status_priv->MediaStatus = TRAY_OPEN;
++	} else if ((MediaStatus == MEDIA_PRESENT) && (MediaEventCode == MEDIA_EVENT_ID_EJECT_REQUEST)) {
+ 		pAMI_media_event_status_priv->MediaEventCode = MEDIA_EVENT_ID_MEDIA_REMOVAL;
+ 		pAMI_media_event_status_priv->MediaStatus = TRAY_OPEN;
+ 	} else

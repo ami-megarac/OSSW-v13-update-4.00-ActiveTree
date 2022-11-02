@@ -1,0 +1,19 @@
+--- linux-5.4.210/Makefile	2022-08-11 18:57:53.000000000 +0800
++++ linux-5.4.210-new/Makefile	2022-08-30 16:43:59.572041099 +0800
+@@ -2,7 +2,7 @@
+ VERSION = 5
+ PATCHLEVEL = 4
+ SUBLEVEL = 210
+-EXTRAVERSION =
++EXTRAVERSION = -ami
+ NAME = Kleptomaniac Octopus
+ 
+ # *DOCUMENTATION*
+@@ -474,6 +474,7 @@
+ 		-I$(objtree)/arch/$(SRCARCH)/include/generated \
+ 		$(if $(building_out_of_srctree),-I$(srctree)/include) \
+ 		-I$(objtree)/include \
++		-include ${SPXINC}/projdef.h \
+ 		$(USERINCLUDE)
+ 
+ KBUILD_AFLAGS   := -D__ASSEMBLY__ -fno-PIE

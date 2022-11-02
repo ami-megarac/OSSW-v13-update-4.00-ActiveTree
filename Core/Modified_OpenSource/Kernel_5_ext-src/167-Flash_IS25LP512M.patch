@@ -1,0 +1,11 @@
+--- linux_old/drivers/mtd/spi-nor/spi-nor.c	2022-07-14 12:14:22.557237884 +0800
++++ linux/drivers/mtd/spi-nor/spi-nor.c	2022-07-14 12:37:20.519418500 +0800
+@@ -2412,7 +2412,7 @@
+ 			SECT_4K | SPI_NOR_DUAL_READ | SPI_NOR_QUAD_READ) },
+ 	{ "is25wp128",  INFO(0x9d7018, 0, 64 * 1024, 256,
+ 			SECT_4K | SPI_NOR_DUAL_READ | SPI_NOR_QUAD_READ) },
+-    { "is25wp512m", INFO( 0x9d601a, 0,64  * 1024, 1024,
++    { "is25wp512m", INFO( 0x9d701a, 0,64  * 1024, 1024,
+             SECT_4K | SPI_NOR_DUAL_READ | SPI_NOR_QUAD_READ) },
+ 	{ "is25lp512m",INFO(0x9d601a, 0,64  * 1024, 1024,
+ 			SECT_4K | SPI_NOR_DUAL_READ | SPI_NOR_QUAD_READ) },

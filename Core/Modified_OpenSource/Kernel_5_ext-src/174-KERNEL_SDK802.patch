@@ -1,0 +1,224 @@
+--- linux/drivers/clk/clk-ast2600.c	2022-08-10 14:49:55.592766061 +0800
++++ linux-new/drivers/clk/clk-ast2600.c	2022-08-10 15:46:46.810908999 +0800
+@@ -80,6 +80,8 @@
+ static struct clk_hw_onecell_data *aspeed_g6_clk_data;
+ 
+ static void __iomem *scu_g6_base;
++/* AST2600 revision: A0, A1, A2, etc */
++static u8 soc_rev;
+ 
+ struct mac_delay_config {
+ 	u32 tx_delay_1000;
+@@ -277,9 +279,10 @@
+ 
+ 		if (hwstrap & BIT(10))
+ 			m = 0x5F;
+-		else if (hwstrap & BIT(8))
+-			m = 0xBF;
+-
++		else {
++			if (hwstrap & BIT(8))
++				m = 0xBF;
++		}
+ 		mult = (m + 1) / (n + 1);
+ 		div = (p + 1);
+ 	}
+@@ -309,9 +312,8 @@
+ static struct clk_hw *ast2600_calc_apll(const char *name, u32 val)
+ {
+ 	unsigned int mult, div;
+-	u32 chip_id = readl(scu_g6_base + ASPEED_G6_SILICON_REV);
+ 
+-	if (((chip_id & CHIP_REVISION_ID) >> 16) >= 2) {
++	if (soc_rev >= 2) {
+ 		if (val & BIT(24)) {
+ 			/* Pass through mode */
+ 			mult = div = 1;
+@@ -463,9 +465,14 @@
+ 	struct aspeed_reset *ar = to_aspeed_reset(rcdev);
+ 	u32 rst = get_bit(id);
+ 	u32 reg = id >= 32 ? ASPEED_G6_RESET_CTRL2 : ASPEED_G6_RESET_CTRL;
++	u32 val;
++	int ret;
+ 
+ 	/* Use set to clear register */
+-	return regmap_write(ar->map, reg + 0x04, rst);
++	ret = regmap_write(ar->map, reg + 0x04, rst);
++	/* Add dummy read to ensure the write transfer is finished */
++	regmap_read(ar->map, reg + 4, &val);
++	return ret;
+ }
+ 
+ static int aspeed_g6_reset_assert(struct reset_controller_dev *rcdev,
+@@ -980,6 +987,13 @@
+ 
+ 	/* i3c clock */
+ 	regmap_read(map, ASPEED_G6_CLK_SELECTION5, &val);
++
++	/* i3c core clock 100MHz (APLL 800MHz / 8) */
++	val &= ~(I3C_CLK_SELECTION | APLL_DIV_SELECTION);
++	val |= FIELD_PREP(I3C_CLK_SELECTION, I3C_CLK_SELECT_APLL_DIV);
++	val |= FIELD_PREP(APLL_DIV_SELECTION, APLL_DIV_8);
++	regmap_write(map, ASPEED_G6_CLK_SELECTION5, val);
++
+ 	if (FIELD_GET(I3C_CLK_SELECTION, val) == I3C_CLK_SELECT_APLL_DIV) {
+ 		val = FIELD_GET(APLL_DIV_SELECTION, val);
+ 		if (val)
+@@ -993,6 +1007,7 @@
+ 						  1);
+ 	}
+ 	aspeed_g6_clk_data->hws[ASPEED_CLK_I3C] = hw;
++
+ };
+ 
+ static void __init aspeed_g6_cc_init(struct device_node *np)
+@@ -1009,6 +1024,8 @@
+ 	if (!scu_g6_base)
+ 		return;
+ 
++	soc_rev = (readl(scu_g6_base + ASPEED_G6_SILICON_REV) & CHIP_REVISION_ID) >> 16;
++
+ 	aspeed_g6_clk_data = kzalloc(struct_size(aspeed_g6_clk_data, hws,
+ 				      ASPEED_G6_NUM_CLKS), GFP_KERNEL);
+ 	if (!aspeed_g6_clk_data)
+@@ -1071,7 +1088,7 @@
+ 		     ASPEED_G6_DEF_MAC34_DELAY_10M);
+ 
+ 	/* MAC3/4 default pad driving strength */
+-	regmap_write(map, ASPEED_G6_MAC34_DRIVING_CTRL, 0x0000000a);
++	regmap_write(map, ASPEED_G6_MAC34_DRIVING_CTRL, 0x0000000f);
+ 
+ 	regmap_read(map, ASPEED_MAC12_CLK_DLY, &reg_1g.w);
+ 	regmap_read(map, ASPEED_MAC12_CLK_DLY_100M, &reg_100.w);
+--- linux/drivers/soc/aspeed/Makefile   2022-08-10 17:22:08.080447087 +0800
++++ linux-new/drivers/soc/aspeed/Makefile       2022-08-10 17:23:25.216698397 +0800
+@@ -11,4 +11,6 @@
+ obj-$(CONFIG_ASPEED_UDMA)      += aspeed-udma.o
+ obj-$(CONFIG_ASPEED_P2A_CTRL)  += aspeed-p2a-ctrl.o
+ obj-$(CONFIG_ASPEED_UART_ROUTING)      += aspeed-uart-routing.o
+ obj-$(CONFIG_ASPEED_OTP)       += aspeed-otp.o
++obj-$(CONFIG_SOC_ASPEED)       += aspeed-usb-phy.o
++obj-$(CONFIG_SOC_ASPEED)       += aspeed-usb-ahp.o
+--- linux/drivers/soc/aspeed/aspeed-usb-ahp.c	2022-08-10 16:21:13.583260900 +0800
++++ linux-new/drivers/soc/aspeed/aspeed-usb-ahp.c	2022-08-10 16:20:06.507402714 +0800
+@@ -0,0 +1,47 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * Copyright 2021 Aspeed Technology Inc.
++ */
++
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/platform_device.h>
++#include <linux/of.h>
++#include <linux/of_address.h>
++#include <linux/regmap.h>
++#include <asm/io.h>
++
++static const struct of_device_id aspeed_usb_ahp_dt_ids[] = {
++	{
++		.compatible = "aspeed,ast2600-usb2ahp",
++	},
++	{ }
++};
++MODULE_DEVICE_TABLE(of, aspeed_usb_ahp_dt_ids);
++
++static int aspeed_usb_ahp_probe(struct platform_device *pdev)
++{
++	dev_info(&pdev->dev, "Initialized USB2AHP\n");
++
++	return 0;
++}
++
++static int aspeed_usb_ahp_remove(struct platform_device *pdev)
++{
++	dev_info(&pdev->dev, "Remove USB2AHP\n");
++
++	return 0;
++}
++
++static struct platform_driver aspeed_usb_ahp_driver = {
++	.probe		= aspeed_usb_ahp_probe,
++	.remove		= aspeed_usb_ahp_remove,
++	.driver		= {
++		.name	= KBUILD_MODNAME,
++		.of_match_table	= aspeed_usb_ahp_dt_ids,
++	},
++};
++module_platform_driver(aspeed_usb_ahp_driver);
++
++MODULE_LICENSE("GPL");
++MODULE_AUTHOR("Neal Liu <neal_liu@aspeedtech.com>");
+--- linux/drivers/soc/aspeed/aspeed-usb-phy.c	2022-08-10 16:21:19.895246655 +0800
++++ linux-new/drivers/soc/aspeed/aspeed-usb-phy.c	2022-08-10 16:20:06.511402706 +0800
+@@ -0,0 +1,70 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * Copyright 2021 Aspeed Technology Inc.
++ */
++
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/platform_device.h>
++#include <linux/of.h>
++#include <linux/of_address.h>
++#include <linux/regmap.h>
++#include <asm/io.h>
++
++struct usb_phy_ctrl {
++	u32 offset;
++	u32 set_bit;
++};
++
++static const struct of_device_id aspeed_usb_phy_dt_ids[] = {
++	{
++		.compatible = "aspeed,ast2600-uphyb",
++	},
++	{ }
++};
++MODULE_DEVICE_TABLE(of, aspeed_usb_phy_dt_ids);
++
++static int aspeed_usb_phy_probe(struct platform_device *pdev)
++{
++	struct device_node *node = pdev->dev.of_node;
++	struct usb_phy_ctrl *ctrl_data;
++	void __iomem *base;
++	int ret;
++
++	ctrl_data = devm_kzalloc(&pdev->dev, sizeof(struct usb_phy_ctrl), GFP_KERNEL);
++	if (!ctrl_data)
++		return -ENOMEM;
++
++	base = of_iomap(node, 0);
++
++	ret = of_property_read_u32_array(node, "ctrl", (u32 *)ctrl_data, 2);
++	if (ret < 0) {
++		dev_err(&pdev->dev, "Could not read ctrl property\n");
++		return -EINVAL;
++	}
++
++	writel(readl(base + ctrl_data->offset) | BIT(ctrl_data->set_bit),
++		base + ctrl_data->offset);
++
++	dev_info(&pdev->dev, "Initialized USB PHY\n");
++
++	return 0;
++}
++
++static int aspeed_usb_phy_remove(struct platform_device *pdev)
++{
++	return 0;
++}
++
++static struct platform_driver aspeed_usb_phy_driver = {
++	.probe		= aspeed_usb_phy_probe,
++	.remove		= aspeed_usb_phy_remove,
++	.driver		= {
++		.name	= KBUILD_MODNAME,
++		.of_match_table	= aspeed_usb_phy_dt_ids,
++	},
++};
++module_platform_driver(aspeed_usb_phy_driver);
++
++MODULE_LICENSE("GPL");
++MODULE_AUTHOR("Neal Liu <neal_liu@aspeedtech.com>");

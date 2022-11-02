@@ -1,0 +1,15 @@
+--- linux-5.4.210/arch/arm/boot/dts/aspeed-g6-pinctrl.dtsi	2022-08-11 18:57:53.000000000 +0800
++++ linux-5.4.210-new/arch/arm/boot/dts/aspeed-g6-pinctrl.dtsi	2022-08-31 14:49:02.628084976 +0800
+@@ -112,9 +112,9 @@
+ 		groups = "FWSPIABR";
+ 	};
+ 
+-	pinctrl_fwspid_default: fwspid_default {
+-		function = "FWSPID";
+-		groups = "FWSPID";
++	pinctrl_fwqspi_default: fwqspid_default {
++		function = "FWQSPI";
++		groups = "FWQSPI";
+ 	};
+ 
+ 	pinctrl_fwspiwp_default: fwspiwp_default {

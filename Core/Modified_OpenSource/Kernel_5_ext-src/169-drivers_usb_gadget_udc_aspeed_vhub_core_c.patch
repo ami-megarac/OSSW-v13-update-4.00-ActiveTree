@@ -1,0 +1,12 @@
+--- linux/drivers/usb/gadget/udc/aspeed-vhub/core.c	2022-08-10 14:38:34.789593000 +0800
++++ linux_new/drivers/usb/gadget/udc/aspeed-vhub/core.c	2022-08-10 15:41:50.737371000 +0800
+@@ -434,6 +434,9 @@
+ 	/* Init hub emulation */
+ 	ast_vhub_init_hub(vhub);
+ 
++	/* Initialize HW */
++	ast_vhub_init_hw(vhub);
++
+ 	dev_info(&pdev->dev, "Initialized virtual hub in USB%d mode\n",
+ 		 vhub->force_usb1 ? 1 : 2);
+ 

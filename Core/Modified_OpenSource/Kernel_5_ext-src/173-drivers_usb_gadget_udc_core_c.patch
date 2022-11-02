@@ -1,0 +1,11 @@
+--- linux/drivers/usb/gadget/udc/core.c	2022-08-10 14:38:33.921606000 +0800
++++ linux_new/drivers/usb/gadget/udc/core.c	2022-08-10 15:41:10.798166000 +0800
+@@ -45,7 +45,7 @@
+ static LIST_HEAD(udc_list);
+ static LIST_HEAD(gadget_driver_pending_list);
+ static DEFINE_MUTEX(udc_lock);
+-static int virtual_device_status = 0;
++static int virtual_device_status = 1; // Set as 1 by the status about default flow of driver init.
+ 
+ static int udc_bind_to_driver(struct usb_udc *udc,
+ 		struct usb_gadget_driver *driver);

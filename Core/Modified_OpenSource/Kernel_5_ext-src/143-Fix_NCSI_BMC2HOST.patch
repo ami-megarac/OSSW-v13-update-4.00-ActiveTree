@@ -1,0 +1,289 @@
+diff -Naur linux_org/drivers/net/bonding/bond_main.c linux/drivers/net/bonding/bond_main.c
+--- linux_org/drivers/net/bonding/bond_main.c	2022-05-06 15:57:15.287555415 +0800
++++ linux/drivers/net/bonding/bond_main.c	2022-05-06 16:49:15.400625171 +0800
+@@ -82,6 +82,8 @@
+ #include <net/bond_alb.h>
+ 
+ #include "bonding_priv.h"
++#include <net/ncsi.h> 
++#include <../drivers/net/ethernet/faraday/ftgmac100.h> 
+ 
+ /*---------------------------- Module parameters ----------------------------*/
+ 
+@@ -870,8 +872,30 @@
+ 		} else {
+ 			if (bond_uses_primary(bond)) {
+ 				slave_info(bond->dev, new_active->dev, "making interface the new active one\n");
++#if defined(CONFIG_SPX_FEATURE_NCSI_GET_LINK_STATUS_FOR_NON_AEN_SUPPORTED_CONTROLLERS)				
++				//When active interface is not NCSI,
++				//Disable NCSI interface to avoid network flow direct transmit from host to BMC via inband.
++				struct ftgmac100 *priv = netdev_priv(new_active->dev);
++				if (priv->use_ncsi)
++				{
++					ncsi_start_dev(priv->ndev);
++				}
++				else
++				{
++					struct net_device *dev = dev_get_by_name(&init_net, CONFIG_SPX_FEATURE_NCSI_DEFAULT_INTERFACE);
++					struct ftgmac100 *priv = dev ? netdev_priv(dev) : NULL;
++					if (priv == NULL)
++					{
++						netdev_err(bond->dev, "Cannot find %s net_device\n",CONFIG_SPX_FEATURE_NCSI_DEFAULT_INTERFACE);
++					}
++					else if (priv->use_ncsi)
++					{
++						ncsi_disable_dev(priv->ndev);
++					}
++				}				
++#endif				
+ 				if (netif_carrier_ok(bond->dev))
+-					call_netdevice_notifiers(NETDEV_CHANGE, bond->dev);
++					call_netdevice_notifiers(NETDEV_CHANGE, bond->dev);						
+ 			}
+ 		}
+ 	}
+@@ -2295,7 +2319,26 @@
+ 			slave_info(bond->dev, slave->dev, "link status definitely up, %u Mbps %s duplex\n",
+ 				   slave->speed == SPEED_UNKNOWN ? 0 : slave->speed,
+ 				   slave->duplex ? "full" : "half");
+-
++#if defined(CONFIG_SPX_FEATURE_NCSI_GET_LINK_STATUS_FOR_NON_AEN_SUPPORTED_CONTROLLERS)
++			//When active interface is not NCSI,
++			//Disable NCSI interface to avoid network flow direct transmit from host to BMC via inband.
++			if (bond->curr_active_slave)
++			{
++				if (strncmp(bond->curr_active_slave->dev->name, CONFIG_SPX_FEATURE_NCSI_DEFAULT_INTERFACE,strlen(CONFIG_SPX_FEATURE_NCSI_DEFAULT_INTERFACE)) != 0)
++				{
++					struct net_device *dev = dev_get_by_name(&init_net, CONFIG_SPX_FEATURE_NCSI_DEFAULT_INTERFACE);
++					struct ftgmac100 *priv = dev ? netdev_priv(dev) : NULL;
++					if (priv == NULL)
++					{
++						netdev_err(bond->dev, "Cannot find %s net_device\n",CONFIG_SPX_FEATURE_NCSI_DEFAULT_INTERFACE);
++					}
++					else if (priv->use_ncsi)
++					{
++						ncsi_disable_dev(priv->ndev);
++					}
++				}
++			}
++#endif
+ 			bond_miimon_link_change(bond, slave, BOND_LINK_UP);
+ 
+ 			if (!bond->curr_active_slave || slave == primary)
+diff -Naur linux_org/include/net/ncsi.h linux/include/net/ncsi.h
+--- linux_org/include/net/ncsi.h	2022-05-06 13:28:26.604904237 +0800
++++ linux/include/net/ncsi.h	2022-05-06 16:49:15.416624417 +0800
+@@ -36,6 +36,7 @@
+ int ncsi_start_dev(struct ncsi_dev *nd);
+ void ncsi_stop_dev(struct ncsi_dev *nd);
+ void ncsi_unregister_dev(struct ncsi_dev *nd);
++int ncsi_disable_dev(struct ncsi_dev *nd);
+ int NCSI_Net_Driver_Register(struct net_device *dev);
+ #else /* !CONFIG_NET_NCSI */
+ static inline int ncsi_vlan_rx_add_vid(struct net_device *dev, __be16 proto, u16 vid)
+diff -Naur linux_org/net/ncsi/internal.h linux/net/ncsi/internal.h
+--- linux_org/net/ncsi/internal.h	2022-05-06 15:02:31.246449374 +0800
++++ linux/net/ncsi/internal.h	2022-05-06 16:49:15.420624228 +0800
+@@ -75,6 +75,7 @@
+ #define NCSI_OEM_MLX_CMD_GMA_PARAM      0x1b   /* Parameter for GMA  */
+ /* OEM Command payload lengths*/
+ #define NCSI_OEM_INT_CMD_MAN_ONL_LEN    7
++#define NCSI_OEM_INT_CMD_OS2BMC_LEN    	6
+ #define NCSI_OEM_BCM_CMD_GMA_LEN        12
+ #define NCSI_OEM_MLX_CMD_GMA_LEN        8
+ /* Mac address offset in OEM response */
+@@ -412,6 +413,7 @@
+ int ncsi_aen_handler(struct ncsi_dev_priv *ndp, struct sk_buff *skb);
+ int ncsi_set_flow_control(struct ncsi_dev_priv *ndp, unsigned char  UserFlowcontrol);
+ int ncsi_set_Vetobit(struct ncsi_dev_priv *ndp, unsigned char  Vetobit);
++int ncsi_set_BMC2Host(struct ncsi_dev_priv *ndp);
+ void ncsi_channel_update(struct ncsi_dev_priv *ndp, struct ncsi_channel *nc);
+ 
+ #endif /* __NCSI_INTERNAL_H__ */
+diff -Naur linux_org/net/ncsi/ncsi-manage.c linux/net/ncsi/ncsi-manage.c
+--- linux_org/net/ncsi/ncsi-manage.c	2022-05-06 13:28:26.616903670 +0800
++++ linux/net/ncsi/ncsi-manage.c	2022-05-06 16:49:15.424624039 +0800
+@@ -127,11 +127,11 @@
+ 		//No disable and enable port, it means no linkup port.
+ 		if(!disable && !enable)
+ 			return;	
+-	
++#if 0	
+ 		//Force linkdown to trigger bond net event
+ 		ncsi_report_link(ndp, true);
+ 		msleep(100);
+-		
++#endif	
+ 		ncsi_update_tx_channel(ndp, nc->package, disable, enable);
+ 		ncsi_report_link(ndp, false);
+ 	}
+@@ -795,6 +795,42 @@
+ 	
+ }
+ 
++/* NCSI Intel OEM Command */
++int ncsi_set_BMC2Host(struct ncsi_dev_priv *ndp)
++{		
++	struct ncsi_package *np;
++	struct ncsi_channel *nc;		
++	struct ncsi_cmd_arg nca;
++	unsigned char data[NCSI_OEM_INT_CMD_OS2BMC_LEN];
++	int ret=0;		
++	
++	nca.ndp = ndp;
++	nca.req_flags = 0;
++	nca.type = NCSI_PKT_CMD_OEM;	
++	nca.payload = NCSI_OEM_INT_CMD_OS2BMC_LEN;
++	
++	memset(data, 0, NCSI_OEM_INT_CMD_OS2BMC_LEN);
++	*(unsigned int *)data = ntohl(NCSI_OEM_MFR_INT_ID);
++	data[4] = 0x40;
++	data[5] = 0x03;	
++	
++	NCSI_FOR_EACH_PACKAGE(ndp, np) {		
++		NCSI_FOR_EACH_CHANNEL(np, nc) {
++			if(nc->version.mf_id != NCSI_OEM_MFR_INT_ID){
++				printk("This NCSI chip not support BMC2Host.\n");
++				return -1;
++			}
++			nca.package = np->id;
++			nca.channel = nc->id;
++			nca.data = data;
++			ret = ncsi_xmit_cmd(&nca);
++		}
++	}	
++
++	return ret;	
++	
++}
++
+ #if IS_ENABLED(CONFIG_NCSI_OEM_CMD_GET_MAC)
+ 
+ /* NCSI OEM Command APIs */
+@@ -2095,3 +2131,32 @@
+ 	kfree(ndp);
+ }
+ EXPORT_SYMBOL_GPL(ncsi_unregister_dev);
++
++//This function is used to disable all channel
++int ncsi_disable_dev(struct ncsi_dev *nd)
++{
++struct ncsi_dev_priv *ndp = TO_NCSI_DEV_PRIV(nd);
++
++	struct ncsi_package *np;
++	struct ncsi_channel *nc;		
++	struct ncsi_cmd_arg nca;
++	int ret=0;		
++
++	nca.ndp = ndp;
++	nca.req_flags = 0;
++	nca.type = NCSI_PKT_CMD_DC;	
++	
++	NCSI_FOR_EACH_PACKAGE(ndp, np)
++	{		
++		NCSI_FOR_EACH_CHANNEL(np, nc)
++		{
++			nca.package = np->id;
++			nca.channel = nc->id;
++			nca.bytes[0] = 1;
++			ret = ncsi_xmit_cmd(&nca);
++		}
++	}
++	
++	return ret;	
++}
++EXPORT_SYMBOL_GPL(ncsi_disable_dev);
+\ No newline at end of file
+diff -Naur linux_org/net/ncsi/ncsi-rsp.c linux/net/ncsi/ncsi-rsp.c
+--- linux_org/net/ncsi/ncsi-rsp.c	2022-05-06 13:28:27.644855069 +0800
++++ linux/net/ncsi/ncsi-rsp.c	2022-05-06 16:49:15.428623852 +0800
+@@ -1215,6 +1215,7 @@
+ 			nca.req_flags = NCSI_REQ_FLAG_EVENT_DRIVEN;
+ 			nca.type = NCSI_PKT_CMD_CIS;				
+ 			
++			nd->link_up = 0;
+ 			NCSI_FOR_EACH_PACKAGE(ndp, np) {		
+ 				NCSI_FOR_EACH_CHANNEL(np, nc) {			
+ 					nca.package = np->id;
+diff -Naur linux_org/net/ncsi/proc.c linux/net/ncsi/proc.c
+--- linux_org/net/ncsi/proc.c	2022-05-06 14:07:10.443053593 +0800
++++ linux/net/ncsi/proc.c	2022-05-06 16:45:03.360499171 +0800
+@@ -28,6 +28,7 @@
+ static int proc_enable(struct ctl_table *ctl,int write,void *buffer,size_t *lenp,loff_t* pos);  
+ static int proc_setvlanid(struct ctl_table *ctl,int write,void *buffer,size_t *lenp,loff_t* pos);
+ static int proc_vetobit(struct ctl_table *ctl,int write,void *buffer,size_t *lenp,loff_t* pos);
++static int proc_bmc2host(struct ctl_table *ctl,int write,void *buffer,size_t *lenp,loff_t* pos);
+ static int proc_detect(struct ctl_table *ctl,int write,void *buffer,size_t *lenp,loff_t* pos);
+ static int proc_setflowcontrol(struct ctl_table *ctl,int write,void *buffer,size_t *lenp,
+         					loff_t* pos);
+@@ -66,6 +67,8 @@
+ #endif
+ int UserControlVetoBit=0;
+ 
++int UserControlBMC2Host=0;
++
+ #ifdef CONFIG_SPX_FEATURE_NCSI_AUTO_FAILOVER
+ int UserAuto=1;
+ #else
+@@ -91,7 +94,8 @@
+     {.procname="EnableSetLink"   ,  .data=&EnableSetLink,   	.maxlen=sizeof(int), .mode=0644, .proc_handler=&proc_dointvec },
+     {.procname="FailOver",  		.data=&UserAuto, 			.maxlen=sizeof(int), .mode=0644, .proc_handler=&proc_dointvec },
+     {.procname="VetoBit",  			.data=&UserVetoBit, 		.maxlen=sizeof(int), .mode=0644, .proc_handler=&proc_dointvec },
+-    {.procname="ControlVetoBit"  ,  .data=&UserControlVetoBit,  .maxlen=sizeof(int), .mode=0644, .proc_handler=&proc_vetobit },
++    {.procname="ControlVetoBit"  ,  .data=&UserControlVetoBit,  .maxlen=sizeof(int), .mode=0644, .proc_handler=&proc_vetobit },    
++    {.procname="ControlBMC2Host"  , .data=&UserControlBMC2Host, .maxlen=sizeof(int), .mode=0644, .proc_handler=&proc_bmc2host },	
+     {.procname="Detect"   ,  		.data=&UserDetect,    		.maxlen=sizeof(int), .mode=0644, .proc_handler=&proc_detect },
+     {.procname="Flowcontrol", 		.data=&UserFlowcontrol, 	.maxlen=sizeof(int), .mode=0644, .proc_handler=&proc_setflowcontrol },
+     {.procname="InitComplete"   ,   .data=&InitComplete,   		.maxlen=sizeof(int), .mode=0444, .proc_handler=&proc_initcomplete },
+@@ -346,6 +350,51 @@
+ #endif		
+ 	
+  	return retval;
++} 
++
++/* This is a function Called when something is written to sysctl "Detect " */
++static
++int 
++proc_bmc2host(struct ctl_table *ctl,int write,void *buffer,size_t *lenp, loff_t *pos)
++{
++	int retval;
++	struct net_device *dev;
++	struct ncsi_dev *nd;
++	struct ncsi_dev_priv *ndp;
++	
++	retval = proc_dointvec(ctl,write,buffer,lenp,pos);
++
++	if (UserControlBMC2Host== 0)
++		return retval;
++	
++	if (UserControlBMC2Host!= 1)
++	{
++		printk(KERN_DEBUG "NCSI: Sysctl \"UserControlBMC2Host\" should be 1 or 0 \n");
++		return retval;
++	}
++	
++	dev = dev_get_by_name(&init_net,UserInterface);
++	if (dev == NULL)
++	{
++		printk("NCSI: ERROR: Unable to get device for %s\n",UserInterface);
++		return retval;
++	}
++		
++	/* Find the NCSI device */
++	nd = ncsi_find_dev(dev);
++	ndp = nd ? TO_NCSI_DEV_PRIV(nd) : NULL;
++	if (!ndp)
++		return -ENODEV;	
++		
++	ncsi_set_BMC2Host(ndp);
++
++#ifdef CONFIG_SPX_FEATURE_NCSI_BMC_TO_HOST
++	ncsi_set_BMC2Host(ndp);
++#else
++	printk("Setting Both Network to BMC and Host to BMC Flow is not Enabled\n");
++#endif		
++	
++ 	return retval;
+ } 
+ 
+ /* This is a function Called when something is written to sysctl "Flow Control "*/

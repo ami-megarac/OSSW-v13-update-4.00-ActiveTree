@@ -1,0 +1,61 @@
+diff -Naur linux_org/drivers/net/phy/phy_device.c linux/drivers/net/phy/phy_device.c
+--- linux_org/drivers/net/phy/phy_device.c	2022-06-17 14:42:01.507098721 +0800
++++ linux/drivers/net/phy/phy_device.c	2022-06-17 14:41:30.192341297 +0800
+@@ -1853,7 +1853,7 @@
+  */
+ int genphy_read_status(struct phy_device *phydev)
+ {
+-	int err, old_link = phydev->link;
++	int err, old_link = phydev->link, bmsr;	
+ 
+ 	/* Update the link, but return if there was an error */
+ 	err = genphy_update_link(phydev);
+@@ -1874,6 +1874,20 @@
+ 		return err;
+ 	}
+ 
++	bmsr = phy_read(phydev, MII_BMSR);
++	if (bmsr < 0) {
++		phydev->speed = SPEED_UNKNOWN;
++		phydev->duplex = DUPLEX_UNKNOWN;
++		return err;
++	}else
++	{
++		if(!(bmsr & BMSR_LSTATUS))
++		{
++			phydev->speed = 0;
++			phydev->duplex = 0;
++		}
++	}
++
+ 	if (phydev->autoneg == AUTONEG_ENABLE && phydev->autoneg_complete) {
+ 		phy_resolve_aneg_linkmode(phydev);
+ 	} else if (phydev->autoneg == AUTONEG_DISABLE) {
+diff -Naur linux_org/net/ncsi/ethtool.c linux/net/ncsi/ethtool.c
+--- linux_org/net/ncsi/ethtool.c	2022-06-17 14:42:01.511098562 +0800
++++ linux/net/ncsi/ethtool.c	2022-06-17 14:41:30.200340980 +0800
+@@ -365,8 +365,11 @@
+ 	}
+     
+ 	if(!nd->link_up)
+-		return 0; //Not link-up
+-	
++	{
++		LinkStatus = LINK_AUTO_NEG_FLAG;
++		goto update_ethtool;
++	}
++
+ 	ndp = nd ? TO_NCSI_DEV_PRIV(nd) : NULL;
+ 	if (!ndp)
+ 		return -ENODEV;	
+@@ -446,8 +449,8 @@
+ 			ecmd.speed   =  SPEED_25000;	
+ 			break;	
+ 		default:
+-			ecmd.speed = SPEED_10;
+-			ecmd.duplex = DUPLEX_HALF;
++			ecmd.speed = 0;
++			ecmd.duplex = 0;
+ 			break;
+ 	}
+ 

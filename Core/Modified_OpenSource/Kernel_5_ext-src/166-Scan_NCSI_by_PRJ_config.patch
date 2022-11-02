@@ -1,0 +1,27 @@
+diff -Naur linux_org/net/ncsi/ncsi-manage.c linux/net/ncsi/ncsi-manage.c
+--- linux_org/net/ncsi/ncsi-manage.c	2022-06-23 14:58:27.595857019 +0800
++++ linux/net/ncsi/ncsi-manage.c	2022-06-23 14:58:16.180309169 +0800
+@@ -1480,12 +1480,12 @@
+ 		schedule_work(&ndp->work);
+ 		break;
+ 	case ncsi_dev_state_probe_cis:
+-		ndp->pending_req_num = NCSI_RESERVED_CHANNEL;
++		ndp->pending_req_num = NCSI_MAX_CHANNEL;
+ 
+ 		/* Clear initial state */
+ 		nca.type = NCSI_PKT_CMD_CIS;
+ 		nca.package = ndp->active_package->id;
+-		for (index = 0; index < NCSI_RESERVED_CHANNEL; index++) {
++		for (index = 0; index < NCSI_MAX_CHANNEL; index++) {
+ 			nca.channel = index;
+ 			ret = ncsi_xmit_cmd(&nca);
+ 			if (ret)
+@@ -1536,7 +1536,7 @@
+ 
+ 		/* Probe next package */
+ 		ndp->package_probe_id++;
+-		if (ndp->package_probe_id >= 8) {
++		if (ndp->package_probe_id >= NCSI_MAX_PACKAGE) {
+ 			/* Probe finished */
+ 			ndp->flags |= NCSI_DEV_PROBED;
+ 			break;

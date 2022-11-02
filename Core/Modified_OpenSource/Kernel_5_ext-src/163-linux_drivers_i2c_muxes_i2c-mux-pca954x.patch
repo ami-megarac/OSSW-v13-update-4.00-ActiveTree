@@ -1,0 +1,145 @@
+--- linux_old/drivers/i2c/muxes/i2c-mux-pca954x.c	2022-06-15 14:31:55.977961472 +0530
++++ linux/drivers/i2c/muxes/i2c-mux-pca954x.c	2022-06-15 14:34:06.882643427 +0530
+@@ -95,7 +95,7 @@
+ 	bool ctrl_state;
+ };
+ 
+-#ifdef CONFIG_SPX_FEATURE_VIRTUALI2C_SUPPORT
++#ifdef CONFIG_SPX_FEATURE_I2CMUX_ADDON_SUPPORT
+ 
+ #define I2C_CTRL_COUNT  16
+ #define DESELECT_TIMEOUT_INITIAL_VAL -1
+@@ -247,7 +247,7 @@
+ 				I2C_SMBUS_BYTE, &dummy);
+ }
+ 
+-#ifdef CONFIG_SPX_FEATURE_VIRTUALI2C_SUPPORT
++#ifdef CONFIG_SPX_FEATURE_I2CMUX_ADDON_SUPPORT
+ static int get_switch_mask(struct i2c_mux_core *muxc)
+ {
+ 	int i, switchMask = 0;
+@@ -281,7 +281,7 @@
+ 	else
+ 	{
+ 		regval = 1 << chan;
+-#ifdef CONFIG_SPX_FEATURE_VIRTUALI2C_SUPPORT
++#ifdef CONFIG_SPX_FEATURE_I2CMUX_ADDON_SUPPORT
+ 		/* update constantly opened channel value */
+ 		regval |= get_switch_mask(muxc);
+ #endif
+@@ -309,7 +309,7 @@
+ 	s8 idle_state;
+ 	bool ctrl_state;
+ 	struct i2c_adapter *root;
+-#ifdef CONFIG_SPX_FEATURE_VIRTUALI2C_SUPPORT
++#ifdef CONFIG_SPX_FEATURE_I2CMUX_ADDON_SUPPORT
+         struct ctrl_sw_chandata *sw_chandata = muxc->adapter[chan]->dev.platform_data;
+ 	s8 deselect_timeout;
+ #endif
+@@ -330,15 +330,15 @@
+ 		/* Deselect active channel */
+ 		data->last_chan = 0;
+ 
+-#ifdef CONFIG_SPX_FEATURE_VIRTUALI2C_SUPPORT
++#ifdef CONFIG_SPX_FEATURE_I2CMUX_ADDON_SUPPORT
+ 		/* update constantly opened channel value */
+ 		data->last_chan |= get_switch_mask(muxc);
+-#endif //VIRTUALI2C_SUPPORT
++#endif //I2CMUX_ADDON_SUPPORT
+ 		return pca954x_reg_write(muxc->parent, client,
+ 					 data->last_chan);
+ 	}
+ 
+-#ifdef CONFIG_SPX_FEATURE_VIRTUALI2C_SUPPORT
++#ifdef CONFIG_SPX_FEATURE_I2CMUX_ADDON_SUPPORT
+ 	deselect_timeout = sw_chandata->deselect_timeout;
+         
+ 	if(deselect_timeout > 0 && deselect_timeout <=127)
+@@ -415,7 +415,7 @@
+ 	return ret < 0 ? ret : count;
+ }
+ 
+-#ifdef CONFIG_SPX_FEATURE_VIRTUALI2C_SUPPORT
++#ifdef CONFIG_SPX_FEATURE_I2CMUX_ADDON_SUPPORT
+ static ssize_t deselect_timeout_show(struct device *dev,
+                                      struct device_attribute *attr,
+                                      char *buf)
+@@ -429,7 +429,7 @@
+ }
+ #endif
+ 
+-#ifdef CONFIG_SPX_FEATURE_VIRTUALI2C_SUPPORT
++#ifdef CONFIG_SPX_FEATURE_I2CMUX_ADDON_SUPPORT
+ static ssize_t deselect_timeout_store(struct device *dev,
+                                  struct device_attribute *attr,
+                                  const char *buf, size_t count)
+@@ -456,7 +456,7 @@
+ }
+ #endif
+ 
+-#ifdef CONFIG_SPX_FEATURE_VIRTUALI2C_SUPPORT
++#ifdef CONFIG_SPX_FEATURE_I2CMUX_ADDON_SUPPORT
+ static ssize_t channel_mask_show(struct device *dev,
+                                      struct device_attribute *attr,
+                                      char *buf)
+@@ -472,7 +472,7 @@
+ }
+ #endif
+ 
+-#ifdef CONFIG_SPX_FEATURE_VIRTUALI2C_SUPPORT
++#ifdef CONFIG_SPX_FEATURE_I2CMUX_ADDON_SUPPORT
+ static ssize_t channel_mask_store(struct device *dev,
+                                  struct device_attribute *attr,
+                                  const char *buf, size_t count)
+@@ -503,7 +503,7 @@
+ #endif
+ 
+ static DEVICE_ATTR_RW(idle_state);
+-#ifdef CONFIG_SPX_FEATURE_VIRTUALI2C_SUPPORT
++#ifdef CONFIG_SPX_FEATURE_I2CMUX_ADDON_SUPPORT
+ static DEVICE_ATTR_RW(deselect_timeout);
+ static DEVICE_ATTR_RW(channel_mask);
+ #endif
+@@ -576,13 +576,13 @@
+ 	struct pca954x *data = i2c_mux_priv(muxc);
+ 	struct i2c_client *client = data->client;
+ 	int c, irq;
+-#ifdef CONFIG_SPX_FEATURE_VIRTUALI2C_SUPPORT
++#ifdef CONFIG_SPX_FEATURE_I2CMUX_ADDON_SUPPORT
+ 	int num;
+ #endif
+ 
+ 	device_remove_file(&client->dev, &dev_attr_idle_state);
+ 
+-#ifdef CONFIG_SPX_FEATURE_VIRTUALI2C_SUPPORT
++#ifdef CONFIG_SPX_FEATURE_I2CMUX_ADDON_SUPPORT
+ 	/* Remove the channel mask and deselect file */
+ 	for(num = 0; num < data->chip->nchans; num++)
+ 	{
+@@ -602,7 +602,7 @@
+ }
+ 
+ 
+-#ifdef CONFIG_SPX_FEATURE_VIRTUALI2C_SUPPORT
++#ifdef CONFIG_SPX_FEATURE_I2CMUX_ADDON_SUPPORT
+ extern void i2c_set_mctp_complete_callback(void (*func)(unsigned int bus));
+ extern void i2c_set_mctp_bmc_cmd_callback(void (*func)(unsigned int bus));
+ 
+@@ -642,7 +642,7 @@
+ 	struct pca954x *data;
+ 	int num;
+ 	int ret;
+-#ifdef CONFIG_SPX_FEATURE_VIRTUALI2C_SUPPORT
++#ifdef CONFIG_SPX_FEATURE_I2CMUX_ADDON_SUPPORT
+ 	struct ctrl_sw_chandata *ctrl_swchan;	
+ 	u32 ch_mask = 0;
+         int i = 0;
+@@ -728,7 +728,7 @@
+ 		if (ret)
+ 			goto fail_cleanup;
+ 
+-#ifdef CONFIG_SPX_FEATURE_VIRTUALI2C_SUPPORT
++#ifdef CONFIG_SPX_FEATURE_I2CMUX_ADDON_SUPPORT
+ 		/* Add mask and deselect_timeout attribute for each channel */
+ 		ctrl_swchan = kzalloc(sizeof(*ctrl_swchan), GFP_KERNEL);
+ 	    	if (ctrl_swchan == NULL)

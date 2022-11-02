@@ -1,0 +1,107 @@
+diff -Naur linux_org/net/ncsi/ncsi-manage.c linux/net/ncsi/ncsi-manage.c
+--- linux_org/net/ncsi/ncsi-manage.c	2022-09-21 10:09:10.416073539 +0800
++++ linux/net/ncsi/ncsi-manage.c	2022-09-27 17:18:52.876718319 +0800
+@@ -26,6 +26,7 @@
+ 
+ extern int CreateProcSys(void);
+ extern int RemoveProcSys(void);
++int dev_updown;
+ 
+ bool ncsi_channel_has_link(struct ncsi_channel *channel)
+ {
+@@ -1759,6 +1760,7 @@
+ 		}
+ 	}
+ 	
++	dev_updown = 0;
+ 	InitComplete = 1;
+ 	ncsi_report_link(ndp, false);
+ 	return -ENODEV;
+@@ -1974,9 +1976,13 @@
+ {
+ 	struct ncsi_dev_priv *ndp = TO_NCSI_DEV_PRIV(nd);
+ 
++	if (dev_updown)		
++		return 0;
++
+ 	if(InitComplete) {
+ 		netdev_dbg(ndp->ndev.dev, "NCSI device state = %u\n", nd->state);
+ 		netdev_dbg(ndp->ndev.dev, "NCSI device flag = %u\n", ndp->flags);
++		dev_updown = 1;
+ 		ncsi_reset_dev(nd);
+ 		return 0;
+ 	} // if
+@@ -2005,6 +2011,9 @@
+ 	int old_state;
+ 	unsigned long flags;
+ 	
++	if (dev_updown)
++		return;
++
+ 	if(InitComplete) {
+ 		return;
+ 	} // if
+@@ -2039,12 +2048,6 @@
+ 	struct ncsi_package *np;
+ 	unsigned long flags;
+ 
+-	if (verbose) {
+-		netdev_info(ndp->ndev.dev, "Wait current polling process and disable polling mechanism since reset ncsi dev\n");
+-	} // if
+-
+-	InitComplete = 0;
+-	flush_work(&ndp->polling_work);
+ 	spin_lock_irqsave(&ndp->lock, flags);
+ 
+ 	if (!(ndp->flags & NCSI_DEV_RESET)) {
+@@ -2054,7 +2057,7 @@
+ 		case ncsi_dev_state_probe:
+ 			/* Not even probed yet - do nothing */
+ 			spin_unlock_irqrestore(&ndp->lock, flags);
+-			goto end;
++			return 0;
+ 		case ncsi_dev_state_suspend:
+ 		case ncsi_dev_state_config:
+ 			/* Wait for the channel to finish its suspend/config
+@@ -2063,7 +2066,7 @@
+ 			 */
+ 			ndp->flags |= NCSI_DEV_RESET;
+ 			spin_unlock_irqrestore(&ndp->lock, flags);
+-			goto end;
++			return 0;
+ 		}
+ 	} else {
+ 		switch (nd->state) {
+@@ -2075,7 +2078,7 @@
+ 		default:
+ 			/* Current reset operation happening */
+ 			spin_unlock_irqrestore(&ndp->lock, flags);
+-			goto end;
++			return 0;
+ 		}
+ 	}
+ 
+@@ -2112,6 +2115,10 @@
+ 		spin_unlock_irqrestore(&ndp->lock, flags);
+ 		ndp->polling.id = 32;	
+ 		ndp->polling.status = 0;
++		InitComplete = 0;
++#ifdef CONFIG_SPX_FEATURE_NCSI_GET_LINK_STATUS_FOR_NON_AEN_SUPPORTED_CONTROLLERS
++		flush_work(&ndp->polling_work);
++#endif
+ 		msleep(500);
+ 		return ncsi_choose_active_channel(ndp);
+ 	}
+@@ -2124,12 +2131,6 @@
+ 
+ 	nd->state = ncsi_dev_state_suspend;
+ 	schedule_work(&ndp->work);
+-end:
+-	if (verbose) {
+-		netdev_info(ndp->ndev.dev, "Enable polling mechanism since reset ncsi dev\n");
+-	} // if
+-
+-	InitComplete = 1;
+ 	return 0;
+ }
+ 
