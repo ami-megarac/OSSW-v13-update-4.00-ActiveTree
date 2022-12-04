@@ -1,0 +1,27 @@
+--- linux/drivers/usb/gadget/udc/aspeed-vhub/hub.c	2022-11-28 12:02:55.859066195 +0800
++++ linux.new/drivers/usb/gadget/udc/aspeed-vhub/hub.c	2022-11-29 09:40:19.567493552 +0800
+@@ -578,6 +578,14 @@
+ 	struct ast_vhub_port *p = &vhub->ports[port];
+ 	u16 set, clr, speed;
+ 
++	/*
++	 * Gadget layer isn't ready in quick connect/disconnect, 
++	 * then driver will be NULL, doing port reset first needs 
++	 * to confirm driver is ready.
++	 */
++	if (!p->dev.driver)
++		return;
++		
+ 	/* First mark disabled */
+ 	ast_vhub_change_port_stat(vhub, port,
+ 				  USB_PORT_STAT_ENABLE |
+@@ -585,9 +593,6 @@
+ 				  USB_PORT_STAT_RESET,
+ 				  false);
+ 
+-	if (!p->dev.driver)
+-		return;
+-
+ 	/*
+ 	 * This will either "start" the port or reset the
+ 	 * device if already started...

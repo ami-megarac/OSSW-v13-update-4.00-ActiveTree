@@ -1,0 +1,18 @@
+--- linux/drivers/watchdog/watchdog_dev.c	2022-11-09 16:55:04.705060535 +0800
++++ linux_n/drivers/watchdog/watchdog_dev.c	2022-11-09 16:52:33.996455000 +0800
+@@ -733,6 +733,7 @@
+ 			break;
+ 		}
+ 		if (val & WDIOS_DISABLECARD) {
++			clear_bit(WDOG_NO_WAY_OUT, &wdd->status);
+ 			err = watchdog_stop(wdd);
+ 			if (err < 0)
+ 				break;
+@@ -755,6 +756,7 @@
+ 		err = watchdog_set_timeout(wdd, val);
+ 		if (err < 0)
+ 			break;
++		set_bit(WDOG_NO_WAY_OUT, &wdd->status);
+ 		/* If the watchdog is active then we send a keepalive ping
+ 		 * to make sure that the watchdog keep's running (and if
+ 		 * possible that it takes the new timeout) */
