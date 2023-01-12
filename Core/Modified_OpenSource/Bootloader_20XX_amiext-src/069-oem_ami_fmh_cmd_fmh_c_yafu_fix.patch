@@ -1,0 +1,17 @@
+diff -Naur uboot_old/oem/ami/fmh/ast_wdt.c uboot/oem/ami/fmh/ast_wdt.c
+--- uboot_old/oem/ami/fmh/ast_wdt.c	2022-12-09 19:10:41.747064168 +0530
++++ uboot/oem/ami/fmh/ast_wdt.c	2022-12-09 20:03:02.972921355 +0530
+@@ -55,6 +55,13 @@
+        *wdt_timeout_status = *((volatile unsigned long *)(FMC_WDT2_REG));
+ #else
+        *wdt_timeout_status = *((volatile unsigned long *)(WDT2_TIMEOUT_STAT_REG));
++#ifdef CONFIG_SPX_FEATURE_SW_FAILSAFE_BOOT /* To fix eip:720768(Dualimage bootselector can't retained after FU added below condtion*/
++       /* 0bit of WDT2_TIMEOUT_STAT_REG register indicates watchdog timeout is occured or not*/
++       if((*wdt_timeout_status & 0x01) == 0 )
++       {
++	       *wdt_timeout_status = 0;
++       }
++#endif
+ #endif
+ #ifdef CONFIG_SPX_FEATURE_GLOBAL_DUAL_IMAGE_SUPPORT
+        /*clear boot source to restore address mapping... */

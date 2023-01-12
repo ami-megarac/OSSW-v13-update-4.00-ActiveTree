@@ -1,0 +1,91 @@
+diff -Naur linux-ori/net/core/ethtool.c linux/net/core/ethtool.c
+--- linux-ori/net/core/ethtool.c	2022-12-21 13:43:00.873142524 +0800
++++ linux/net/core/ethtool.c	2022-12-21 13:43:00.877142486 +0800
+@@ -26,6 +26,8 @@
+ #include <net/devlink.h>
+ #include <net/xdp_sock.h>
+ #include <net/flow_offload.h>
++#include <net/ncsi.h>
++#include "../ncsi/internal.h"
+ 
+ /*
+  * Some useful ethtool_ops methods that're device independent.
+@@ -35,7 +37,25 @@
+ 
+ u32 ethtool_op_get_link(struct net_device *dev)
+ {
+-	return netif_carrier_ok(dev) ? 1 : 0;
++	struct vlan_dev_priv *vlan = vlan_dev_priv(dev);
++	struct net_device *real_dev;
++	struct ncsi_dev *nd;
++
++	// For dealing with VLAN on NCSI
++	if (is_vlan_dev(dev)) {
++		real_dev = vlan->real_dev;
++		nd = ncsi_find_dev(real_dev);
++		if (!nd) {
++			return netif_carrier_ok(dev) ? 1 : 0;
++		} // if
++		else {
++			return nd->link_up;
++		}
++	} // if
++	else {
++		return netif_carrier_ok(dev) ? 1 : 0;
++	} // else
++
+ }
+ EXPORT_SYMBOL(ethtool_op_get_link);
+ 
+diff -Naur linux-ori/net/ncsi/ncsi-manage.c linux/net/ncsi/ncsi-manage.c
+--- linux-ori/net/ncsi/ncsi-manage.c	2022-12-21 13:44:28.072221020 +0800
++++ linux/net/ncsi/ncsi-manage.c	2022-12-21 13:44:28.072221020 +0800
+@@ -21,6 +21,8 @@
+ #include "ncsi-pkt.h"
+ #include "ncsi-netlink.h"
+ 
++#include "../8021q/vlan.h"
++
+ LIST_HEAD(ncsi_dev_list);
+ DEFINE_SPINLOCK(ncsi_dev_lock);
+ 
+@@ -57,8 +59,17 @@
+ 	struct ncsi_package *np;
+ 	struct ncsi_channel *nc;
+ 	unsigned long flags;
++	struct vlan_info *info;
++	struct vlan_group *grp = NULL;
++	struct net_device *vlandev =NULL;	
++	int i =0;
+ 
+ 	nd->state = ncsi_dev_state_functional;
++	info = rtnl_dereference(nd->dev->vlan_info);
++	if (info) {
++		grp = &info->grp;
++	} // if
++
+ 	if (force_down) {
+ 		nd->link_up = 0;
+ 		goto report;
+@@ -92,6 +103,21 @@
+ 	}
+ 	else
+ 		call_netdevice_notifiers(NETDEV_CHANGE,nd->dev);
++
++	if (info) {
++		msleep(500);
++		vlan_group_for_each_dev(grp, i, vlandev) {
++			if(rtnl_trylock()){
++				call_netdevice_notifiers(NETDEV_CHANGE,vlandev);
++				rtnl_unlock();
++			} // if
++			else {
++				call_netdevice_notifiers(NETDEV_CHANGE,vlandev);
++			} // else
++			break;
++		}
++	} // if
++
+ 	nd->handler(nd);	
+ }
+ 
