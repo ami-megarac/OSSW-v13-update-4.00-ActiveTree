@@ -1,0 +1,30 @@
+--- linux/drivers/usb/gadget/function/f_mass_storage.c	2023-01-12 11:14:42.515296000 +0800
++++ linux_new/drivers/usb/gadget/function/f_mass_storage.c	2023-01-12 15:54:59.774931000 +0800
+@@ -3858,6 +3858,7 @@
+ 	uint8 instance;
+ 	AMI_GADGET_PRIV *pAMI_gadget_priv = NULL;
+ 	AMI_GADGET_EVENT_STATUS_PRIV *pAMI_media_event_status_priv;
++	int ret = 0;
+ 	
+ 	if (NULL == fsg)
+ 	{
+@@ -3908,11 +3909,18 @@
+ 	
+ 	pAMI_media_event_status_priv->MediaStatus = 0x00;
+ 	pAMI_media_event_status_priv->additional_media_eject = MEDIA_EVENT_ID_EJECT_REQUEST;	// For CD eject event with Windows Host.
+-	if (!wait_event_timeout(common->eject_wait, pAMI_media_event_status_priv->additional_media_eject == MEDIA_EVENT_ID_NO_EVENT, KERNEL_WAIT_TIMEOUT))
++	ret = wait_event_timeout(common->eject_wait, pAMI_media_event_status_priv->additional_media_eject == MEDIA_EVENT_ID_NO_EVENT, KERNEL_WAIT_TIMEOUT);
++	
++	if (!ret)
+ 	{	// Mind the Timeout...
+ 		printk("CRIT!!!, %d timeout\n", instance);
+ 		return -1;
+ 	}
++	else if (0 > ret)
++	{	// Mind the interrupt by a signal.
++		printk("WARN!!!, %d interrupted by %d\n", instance, ret);
++		return ret;
++	}
+ 
+ 	return 0; // all right.
+ }

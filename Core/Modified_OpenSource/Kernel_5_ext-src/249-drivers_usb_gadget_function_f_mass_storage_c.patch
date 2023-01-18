@@ -1,0 +1,1198 @@
+--- linux/drivers/usb/gadget/function/f_mass_storage.c	2022-12-21 11:44:50.734385000 +0800
++++ linux_new/drivers/usb/gadget/function/f_mass_storage.c	2022-12-28 15:50:16.692429025 +0800
+@@ -319,6 +319,13 @@
+ #if (1 == ENABLE_MASS_STORAGE_NODE)
+ #define MAX_AMI_USB_PKT_BUF	(sizeof(GADGET_SCSI_PACKET) + MAX_SCSI_DATA)
+ 
++enum gadget_req_state {
++	GADGET_REQ_STATE_WAKE_UP_CLEAR = 0,// 0: remote clear it before waiting req from host.
++	GADGET_REQ_STATE_WAKE_UP_SET = 1,// 1: kernel set up before sending the req and waking up remote.
++	GADGET_REQ_STATE_MAX = 2,
++	GADGET_REQ_STATE_INVALID = 2,
++};
++
+ typedef struct AMI_GADGET_EVENT_STATUS_PRIV{
+ 	uint8	MediaEventCode;
+ 	uint8	MediaStatus;
+@@ -332,7 +339,13 @@
+ 	// 0: file-backed mode(handle SCSI command via origin gadget functions).
+ 	// 1: virtual device mode(bypass SCSI command to remote client).
+ 	// u8 redirect_mode;
++	// Add wait_queue to support IPMI USB.
++	wait_queue_head_t *wait_req;	// pointer for cd_req_wait[...] or hd_req_wait[...], vendor_req_wait[0].
++	wait_queue_head_t *wait_res;	// pointer for cd_res_wait[0] or hd_res_wait[0], vendor_res_wait[0].
++	uint8 *usb_pkt_req;
+ 	uint8 *usb_pkt_res;
++	u8 wake_up_state_req;	// 0: remote clear it after waking up by kernel. 1: kernel set up before sending the req and waking up remote.
++	u8 vendor_exit;	// 0: not get exit request from upper layer. 1: accept the exit request from upper layer.
+ 	AMI_GADGET_EVENT_STATUS_PRIV media_event_status;	// For SCSI command: 0x4A(GET EVENT/STATUS NOTIFICATION) response.
+ 	// u8 test;
+ } PACKED AMI_GADGET_PRIV;
+@@ -349,6 +362,13 @@
+ 
+ #define MAX_AMI_LUNS				(4)	// as max ami luns supported for cd and hd.
+ #define KERNEL_WAIT_TIMEOUT			(3*HZ)	// the time for kernel to wait host response for CD ejcetion, to avoid kernel crash with infinite wait. default: 3 seconds in jiffies with wait_event_timeout.
++#define MAX_AMI_VENDOR_USB_LUNS		(1)	// "ONLY ONE instance" for IPMI USB between kernel fsg thread with its' device node....
++#define AMI_VENDOR_WAIT_TIMEOUT		(30*HZ)	// the time for kernel to wait YAFU response, default: 30 seconds in jiffies with wait_event_interruptible_timeout.
++
++#define AMI_GADGET_NAME_CD	"cdrom"	// for dev node usbcd.
++#define AMI_GADGET_NAME_HD	"hddisk"	// for dev node usbhd
++#define AMI_GADGET_NAME_PORT_B_HD	"port_b_hddisk"	// for dev node usbport_b_hddisk
++#define AMI_GADGET_NAME_IPMIUSB	"ipmi_usb"	// dev node usbipmi
+ 
+ #endif // end #if (1 == ENABLE_MASS_STORAGE_NODE)
+ 
+@@ -373,6 +393,7 @@
+ 	struct cdev			cdev;	// For creating device node. not same as "struct usb_composite_dev *cdev";
+ 	spinlock_t		lock;		/* lock this structure */
+ 	AMI_GADGET_PRIV	ami_gadget_priv[MAX_AMI_LUNS];
++	AMI_GADGET_PRIV	ami_gadget_vendor_priv[MAX_AMI_VENDOR_USB_LUNS];
+ 	u8			mass_storage_status;
+ #endif // end #if (1 == ENABLE_MASS_STORAGE_NODE)
+ };
+@@ -380,8 +401,8 @@
+ #if (1 == ENABLE_MASS_STORAGE_NODE)
+ #define MSG_CLASS_NAME				"msg"	// a class under /sys/class/, for short of "Mass Storage Gadget"...
+ #define MSG_NODE_NAME_PREFIX		"usb"	// device node name.
+-#define MSG_MINORS					(3)	// minors indicates the maxium number of device node that allow to create under /dev/.
+-										// One node is for CD, and the other one is for HD
++#define MSG_MINORS					(6)	// minors indicates the maxium number of device node that allow to create under /dev/.
++										// support device list: CD, HD, port B HD, ipmiusb
+ static int major, minors;
+ static struct class *msg_class;	// a class for mass storage gadget.
+ static DEFINE_IDA(msg_ida);
+@@ -389,6 +410,26 @@
+ void gmsg_ami_init_device(struct fsg_dev *fsg, const unsigned int node_type_id);
+ static uint8 cd_usb_hw_res_pkt[MAX_AMI_LUNS][MAX_AMI_USB_PKT_BUF];
+ static uint8 hd_usb_hw_res_pkt[MAX_AMI_LUNS][MAX_AMI_USB_PKT_BUF];
++
++// For IPMI USB...
++// AMI IPMI USB: For vendor SCSI command, Using the device node of AMI Virtual CD.
++enum gadget_ipmi_usb_node_type_id {
++	// Indicated the type and usage(HD/CD) of device node for current mass-storage gadget.
++	// Base on the attribute of lun: cdrom. 0: HD, 1: CD. 
++	GADGET_IPMI_USB_NODE_TYPE_ID = GADGET_MASS_STORAGE_NODE_TYPE_ID_CD,	// Host send IPMI USB request via the port as same as CD-ROM.
++	GADGET_IPMI_USB_NODE_TYPE_ID_MAX,
++	GADGET_IPMI_USB_NODE_TYPE_ID_INVALID = GADGET_IPMI_USB_NODE_TYPE_ID_MAX,
++};
++static wait_queue_head_t ipmi_cd_req_wait[MAX_AMI_VENDOR_USB_LUNS];	// waitqueue for IPMI cd request.
++static wait_queue_head_t ipmi_cd_res_wait[1];	// waitqueue for IPMI cd response. "ONLY ONE instance" for kernel fsg thread with its' device node....
++static uint8 ipmi_cd_usb_hw_req_pkt[MAX_AMI_VENDOR_USB_LUNS][MAX_AMI_USB_PKT_BUF];
++static uint8 ipmi_cd_usb_hw_res_pkt[MAX_AMI_VENDOR_USB_LUNS][MAX_AMI_USB_PKT_BUF];
++static wait_queue_head_t vendor_req_wait[MAX_AMI_VENDOR_USB_LUNS];	// waitqueue for IPMI USB request via AMI virtual CD.
++static wait_queue_head_t vendor_res_wait[MAX_AMI_VENDOR_USB_LUNS];	// waitqueue for IPMI USB response via AMI virtual CD.
++static uint8 vendor_usb_hw_req_pkt[MAX_AMI_VENDOR_USB_LUNS][MAX_AMI_USB_PKT_BUF];
++static uint8 vendor_usb_hw_res_pkt[MAX_AMI_VENDOR_USB_LUNS][MAX_AMI_USB_PKT_BUF];
++static int gmsg_vendor_remote_wake_up(struct fsg_dev *fsg, const unsigned int Instance);
++static int gmsg_vendor_kernel_wait_response(struct fsg_dev *fsg, const unsigned int Instance);
+ int ami_do_cmnd_to_ami_scsi_protocol(const struct fsg_common *common, GADGET_SCSI_PACKET *pReqPkt);
+ 
+ static int ami_event_notification_kernel_cd_load(struct fsg_dev *fsg, const unsigned int Instance);
+@@ -1946,6 +1987,497 @@
+ 	return len;
+ }
+ 
++/*
++ * Check whether the command is properly formed and whether its data size
++ * and direction agree with the values we already have.
++ */
++static int ami_vendor_check_command(struct fsg_common *common, int cmnd_size,
++			 enum data_direction data_dir, unsigned int mask,
++			 int needs_medium, const char *name)
++{
++	unsigned int		lun = common->cmnd[1] >> 5;
++	static const char	dirletter[4] = {'u', 'o', 'i', 'n'};
++	char			hdlen[20];
++	struct fsg_lun		*curlun;
++
++	hdlen[0] = 0;
++	if (common->data_dir != DATA_DIR_UNKNOWN)
++		sprintf(hdlen, ", H%c=%u", dirletter[(int) common->data_dir],
++			common->data_size);
++	VDBG(common, "SCSI command: %s;  Dc=%d, D%c=%u;  Hc=%d%s\n",
++	     name, cmnd_size, dirletter[(int) data_dir],
++	     common->data_size_from_cmnd, common->cmnd_size, hdlen);
++
++	/*
++	 * We can't reply at all until we know the correct data direction
++	 * and size.
++	 */
++	if (common->data_size < common->data_size_from_cmnd) {
++		/*
++		 * Host data size < Device data size is a phase error.
++		 * Carry out the command, but only transfer as much as
++		 * we are allowed.
++		 */
++		common->data_size_from_cmnd = common->data_size;
++		common->phase_error = 1;
++	}
++	common->residue = common->data_size;
++	common->usb_amount_left = common->data_size;
++
++	/* Conflicting data directions is a phase error */
++	if (common->data_dir != data_dir && common->data_size_from_cmnd > 0) {
++		common->phase_error = 1;
++		return -EINVAL;
++	}
++
++	/* Verify the length of the command itself */
++	if (cmnd_size != common->cmnd_size) {
++
++		/*
++		 * Special case workaround: There are plenty of buggy SCSI
++		 * implementations. Many have issues with cbw->Length
++		 * field passing a wrong command size. For those cases we
++		 * always try to work around the problem by using the length
++		 * sent by the host side provided it is at least as large
++		 * as the correct command length.
++		 * Examples of such cases would be MS-Windows, which issues
++		 * REQUEST SENSE with cbw->Length == 12 where it should
++		 * be 6, and xbox360 issuing INQUIRY, TEST UNIT READY and
++		 * REQUEST SENSE with cbw->Length == 10 where it should
++		 * be 6 as well.
++		 */
++		if (cmnd_size <= common->cmnd_size) {
++			DBG(common, "%s is buggy! Expected length %d "
++			    "but we got %d\n", name,
++			    cmnd_size, common->cmnd_size);
++			cmnd_size = common->cmnd_size;
++		} else {
++			common->phase_error = 1;
++			return -EINVAL;
++		}
++	}
++
++	/* Check that the LUN values are consistent */
++	if (common->lun != lun)
++		DBG(common, "using LUN %u from CBW, not LUN %u from CDB\n",
++		    common->lun, lun);
++
++	/* Check the LUN */
++	curlun = common->curlun;
++	if (curlun) {
++		if (common->cmnd[0] != REQUEST_SENSE) {
++			curlun->sense_data = SS_NO_SENSE;
++			curlun->sense_data_info = 0;
++			curlun->info_valid = 0;
++		}
++	} else {
++		common->bad_lun_okay = 0;
++
++		/*
++		 * INQUIRY and REQUEST SENSE commands are explicitly allowed
++		 * to use unsupported LUNs; all others may not.
++		 */
++		if (common->cmnd[0] != INQUIRY &&
++		    common->cmnd[0] != REQUEST_SENSE) {
++			printk("vendor unsupported LUN %u\n", common->lun);
++			return -EINVAL;
++		}
++	}
++
++	/*
++	 * If a unit attention condition exists, only INQUIRY and
++	 * REQUEST SENSE commands are allowed; anything else must fail.
++	 */
++	if (curlun && curlun->unit_attention_data != SS_NO_SENSE &&
++	    common->cmnd[0] != INQUIRY &&
++	    common->cmnd[0] != REQUEST_SENSE) {
++		curlun->sense_data = curlun->unit_attention_data;
++		curlun->unit_attention_data = SS_NO_SENSE;
++		printk("vendor unsupported condition. LUN %u\n", common->lun);
++		return -EINVAL;
++	}
++
++#if (0)	// NOT available for vendor SCSI commands.
++	/* Check that only command bytes listed in the mask are non-zero */
++	common->cmnd[1] &= 0x1f;			/* Mask away the LUN */
++	for (i = 1; i < cmnd_size; ++i) {
++		if (common->cmnd[i] && !(mask & (1 << i))) {
++			if (curlun)
++				curlun->sense_data = SS_INVALID_FIELD_IN_CDB;
++			return -EINVAL;
++		}
++	}
++#endif 
++
++	/* If the medium isn't mounted and the command needs to access
++	 * it, return an error. */
++	if (curlun && !fsg_lun_is_open(curlun) && needs_medium) {
++		curlun->sense_data = SS_MEDIUM_NOT_PRESENT;
++		return -EINVAL;
++	}
++
++	return 0;
++}
++static int ami_do_vendor_write(struct fsg_common *common)
++{	// refer to do_write
++	struct fsg_lun		*curlun = common->curlun;
++	struct fsg_dev *fsg = common->fsg;
++	u32			lba;
++	struct fsg_buffhd	*bh;
++	int			get_some_more;
++	u32			amount_left_to_req, amount_left_to_write;
++	loff_t			usb_offset, file_offset, file_offset_tmp;
++	unsigned int		amount;
++	int			rc;
++	unsigned int node_type_id;
++	int instance = 0;
++	GADGET_SCSI_PACKET *pResPkt = NULL;
++	uint8_t *pResData;
++	int len;
++	GADGET_SCSI_PACKET *pReqPkt = NULL;
++	uint8_t *pReqData;
++	AMI_GADGET_PRIV *pAMI_gadget_vendor_priv;
++	int retval;
++#if (0)
++// debugging.
++	SCSI_COMMAND_PACKET *pScsiPkt;
++	uint8_t *pCDB;
++#endif
++	
++	node_type_id = fsg->node_type;
++	if ( GADGET_IPMI_USB_NODE_TYPE_ID != node_type_id)
++	{	// invalid node for IPMI USB.
++		return -EINVAL;
++	}
++	
++	if (MAX_AMI_VENDOR_USB_LUNS <= common->lun)
++	{
++		printk("LUN %d ami_do_vendor_write overflow\n", common->lun);
++		return -EFAULT;
++	}
++	
++	instance = common->lun;
++	pAMI_gadget_vendor_priv = &common->fsg->ami_gadget_vendor_priv[instance];
++	
++	if (NULL == pAMI_gadget_vendor_priv->usb_pkt_req)
++	{
++		return -EINVAL;
++	}
++	
++	ami_do_cmnd_to_ami_scsi_protocol(common, (GADGET_SCSI_PACKET*)pAMI_gadget_vendor_priv->usb_pkt_req);
++	
++#if (0)	// Need to ignore the ro flag for vendor scsi command with CDROM.
++	if (curlun->ro) {
++		printk("WARNING!!! LUN %d ami_do_vendor_write ro\n", instance);
++		curlun->sense_data = SS_WRITE_PROTECTED;
++		return -EINVAL;
++	}
++#endif 
++	
++	if (common->cmnd[0] == WRITE_6)
++		lba = get_unaligned_be24(&common->cmnd[1]);
++	else {
++		lba = get_unaligned_be32(&common->cmnd[2]);
++
++		/*
++		 * We allow DPO (Disable Page Out = don't save data in the
++		 * cache) and FUA (Force Unit Access = write directly to the
++		 * medium).  We don't implement DPO; we implement FUA by
++		 * performing synchronous output.
++		 */
++		if (common->cmnd[1] & ~0x18) {
++			curlun->sense_data = SS_INVALID_FIELD_IN_CDB;
++			return -EINVAL;
++		}
++		if (!curlun->nofua && (common->cmnd[1] & 0x08)) { /* FUA */
++			/* nothing to do for vmedia redirectiion.
++			spin_lock(&curlun->filp->f_lock);
++			curlun->filp->f_flags |= O_SYNC;
++			spin_unlock(&curlun->filp->f_lock);
++			*/
++		}
++	}
++	
++	/* Carry out the file writes */
++	get_some_more = 1;
++	file_offset = usb_offset = 0;	// Always start at 0 of buffer for remote client.
++	amount_left_to_req = common->data_size_from_cmnd;
++	amount_left_to_write = common->data_size_from_cmnd;
++	instance = common->lun;
++	pAMI_gadget_vendor_priv = &common->fsg->ami_gadget_vendor_priv[instance];
++	pReqPkt = (GADGET_SCSI_PACKET*)pAMI_gadget_vendor_priv->usb_pkt_req;
++	pReqPkt->DataLen = common->data_size_from_cmnd;
++	pReqData = &pReqPkt->Data;
++	// printk("LUN %d ami_do_vendor_write lba %08X len %08X\n", common->lun, lba, amount_left_to_req);
++	while (amount_left_to_write > 0) {
++		// starting copy data to buf for remote client.
++		/* Queue a request for more data from the host */
++		bh = common->next_buffhd_to_fill;
++		if (bh->state == BUF_STATE_EMPTY && get_some_more) {
++
++			/*
++			 * Figure out how much we want to get:
++			 * Try to get the remaining amount,
++			 * but not more than the buffer size.
++			 */
++			amount = min(amount_left_to_req, FSG_BUFLEN);
++
++			/* Beyond the end of the backing file? */
++			if (usb_offset >= MAX_SCSI_DATA) {	// never out of buffer size for remte client.
++				get_some_more = 0;
++				curlun->sense_data =
++					SS_LOGICAL_BLOCK_ADDRESS_OUT_OF_RANGE;
++				curlun->sense_data_info =
++					usb_offset >> curlun->blkbits;
++				curlun->info_valid = 1;
++				continue;
++			}
++
++			/* Get the next buffer */
++			usb_offset += amount;
++			common->usb_amount_left -= amount;
++			amount_left_to_req -= amount;
++			if (amount_left_to_req == 0)
++				get_some_more = 0;
++
++			/*
++			 * Except at the end of the transfer, amount will be
++			 * equal to the buffer size, which is divisible by
++			 * the bulk-out maxpacket size.
++			 */
++			set_bulk_out_req_length(common, bh, amount);
++			if (!start_out_transfer(common, bh))
++				/* Dunno what to do if common->fsg is NULL */
++				return -EIO;
++			common->next_buffhd_to_fill = bh->next;
++			continue;
++		}
++
++		/* Write the received data to the backing file */
++		bh = common->next_buffhd_to_drain;
++		if (bh->state == BUF_STATE_EMPTY && !get_some_more)
++		{printk("ami_do_vendor_write bh->state == BUF_STATE_EMPTY && !get_some_more\n");
++			break;			/* We stopped early */
++		}
++
++		/* Wait for the data to be received */
++		rc = sleep_thread(common, false, bh);
++		if (rc)
++			return rc;
++
++		common->next_buffhd_to_drain = bh->next;
++		bh->state = BUF_STATE_EMPTY;
++
++		/* Did something go wrong with the transfer? */
++		if (bh->outreq->status != 0) {
++			curlun->sense_data = SS_COMMUNICATION_FAILURE;
++			curlun->sense_data_info =
++					file_offset >> curlun->blkbits;
++			curlun->info_valid = 1;
++			break;
++		}
++
++		amount = bh->outreq->actual;
++		if (MAX_SCSI_DATA - file_offset < amount) {
++			LERROR(curlun, "write %u @ %llu beyond end %u\n",
++				       amount, (unsigned long long)file_offset,
++				       MAX_SCSI_DATA);
++			amount = MAX_SCSI_DATA - file_offset;
++		}
++
++		/*
++		 * Don't accept excess data.  The spec doesn't say
++		 * what to do in this case.  We'll ignore the error.
++		 */
++		amount = min(amount, bh->bulk_out_intended_length);
++
++#if (0)	// No full blcok data for AMI venddor SCSI command.
++		/* Don't write a partial block */
++		amount = round_down(amount, curlun->blksize);
++		if (amount == 0)
++		{
++			goto empty_vendor_copy;
++		}
++#endif	//
++
++		/* Copy data to buffer for remote client */
++		file_offset_tmp = file_offset;
++		if ((file_offset_tmp + amount) > MAX_SCSI_DATA)
++		{
++			printk("ERROR!!! LUN %d copy overflow %llu > %u\n", instance, (file_offset_tmp + amount), MAX_SCSI_DATA);
++			goto empty_vendor_copy;
++		}
++		memcpy(&pReqData[file_offset_tmp], bh->buf, amount);
++		VLDBG(curlun, "data copy %u @ %llu \n", amount,
++				(unsigned long long)file_offset);
++		if (signal_pending(current))
++			return -EINTR;		/* Interrupted! */
++
++		file_offset += amount;
++		amount_left_to_write -= amount;
++		common->residue -= amount;
++
++ empty_vendor_copy:
++		/* Did the host decide to stop early? */
++		if (bh->outreq->actual < bh->bulk_out_intended_length) {
++			common->short_packet_received = 1;
++			break;
++		}
++	}
++	
++	// wake up for ioctl.
++	instance = common->lun;
++	smp_store_release(&common->fsg->mass_storage_status, BUF_STATE_EMPTY);
++	gmsg_vendor_remote_wake_up(common->fsg, instance);
++	
++	// wait for remote...
++	retval = gmsg_vendor_kernel_wait_response(common->fsg, instance);
++	if (0 > retval )
++	{	// timeout or interrupted by a signal.
++		return 0;
++	}
++	pAMI_gadget_vendor_priv = &common->fsg->ami_gadget_vendor_priv[instance];
++	pResPkt = (GADGET_SCSI_PACKET*)pAMI_gadget_vendor_priv->usb_pkt_res;
++	
++	pResData = &pResPkt->Data;
++	
++	len = pResPkt->DataLen;
++	
++	// No data is needed for this request...
++	if (0 < len)
++	{
++		printk("WARNING! LUN %d No handler ami_do_vendor_write len %d\n", common->lun, len);
++	}
++	
++	return -EIO;		/* No default reply */
++}
++static int ami_do_vendor_read(struct fsg_common *common, struct fsg_buffhd *bh)
++{	// refer to ami_do_inquiry
++	struct fsg_dev *fsg = common->fsg;
++	u8		*buf = (u8 *)bh->buf;
++	uint8_t *pResData;
++	unsigned int node_type_id;
++	int instance = 0;
++	GADGET_SCSI_PACKET *pResPkt = NULL;
++	int len;
++	AMI_GADGET_PRIV *pAMI_gadget_vendor_priv;
++	int retval;
++	
++	node_type_id = fsg->node_type;
++	if ( GADGET_IPMI_USB_NODE_TYPE_ID != node_type_id)
++	{	// invalid node for IPMI USB.
++		return -EINVAL;
++	}
++	
++	if (MAX_AMI_VENDOR_USB_LUNS <= common->lun)
++	{
++		printk("LUN %d ami_do_vendor_read overflow\n", common->lun);
++		return -EFAULT;
++	}
++	
++	// printk("LUN %d handle ami_do_vendor_read mode %d\n", common->lun, common->fsg->ami_gadget_priv[common->lun].redirect_mode);
++	instance = common->lun;
++	pAMI_gadget_vendor_priv = &common->fsg->ami_gadget_vendor_priv[instance];
++	
++	if (NULL == pAMI_gadget_vendor_priv->usb_pkt_req)
++	{
++		return -EINVAL;
++	}
++	
++	ami_do_cmnd_to_ami_scsi_protocol(common, (GADGET_SCSI_PACKET*)pAMI_gadget_vendor_priv->usb_pkt_req);
++	
++	// wake up for ioctl.
++	instance = common->lun;
++	smp_store_release(&common->fsg->mass_storage_status, BUF_STATE_EMPTY);
++	gmsg_vendor_remote_wake_up(common->fsg, instance);
++	
++	// wait for remote...
++	retval = gmsg_vendor_kernel_wait_response(common->fsg, instance);
++	if (0 > retval )
++	{	// timeout or interrupted by a signal.
++		return 0;
++	}
++	pAMI_gadget_vendor_priv = &common->fsg->ami_gadget_vendor_priv[instance];
++	pResPkt = (GADGET_SCSI_PACKET*)pAMI_gadget_vendor_priv->usb_pkt_res;
++	pResData = &pResPkt->Data;
++	
++	len = pResPkt->DataLen;
++	
++	memcpy(buf, pResData, pResPkt->DataLen);
++	
++	if (0 == len)
++	{
++		printk("WARNING! LUN %d No handler ami_do_vendor_read len %d\n", common->lun, len);
++	}
++	
++	return len;
++}
++
++static int ami_do_vendor_id(struct fsg_common *common, struct fsg_buffhd *bh)
++{	// refer to ami_do_inquiry
++	struct fsg_dev *fsg = common->fsg;
++	u8		*buf = (u8 *)bh->buf;
++	uint8_t *pResData;
++	unsigned int node_type_id;
++	int instance = 0;
++	GADGET_SCSI_PACKET *pResPkt = NULL;
++	int len;
++	AMI_GADGET_PRIV *pAMI_gadget_vendor_priv;
++	int retval;
++	
++	
++	
++	node_type_id = fsg->node_type;
++	if ( GADGET_IPMI_USB_NODE_TYPE_ID != node_type_id)
++	{	// invalid node for IPMI USB.
++		return -EINVAL;
++	}
++	
++	if (MAX_AMI_VENDOR_USB_LUNS <= common->lun)
++	{
++		printk("LUN %d ami_do_vendor_id overflow\n", common->lun);
++		return -EFAULT;
++	}
++	
++	// printk("LUN %d handle ami_do_vendor_id mode %d\n", common->lun, common->fsg->ami_gadget_priv[common->lun].redirect_mode);
++
++	instance = common->lun;
++	pAMI_gadget_vendor_priv = &common->fsg->ami_gadget_vendor_priv[instance];
++	
++	if (NULL == pAMI_gadget_vendor_priv->usb_pkt_req)
++	{
++		return -EINVAL;
++	}
++	
++	ami_do_cmnd_to_ami_scsi_protocol(common, (GADGET_SCSI_PACKET*)pAMI_gadget_vendor_priv->usb_pkt_req);
++	
++	// wake up for ioctl.
++	instance = common->lun;
++	smp_store_release(&common->fsg->mass_storage_status, BUF_STATE_EMPTY);
++	gmsg_vendor_remote_wake_up(common->fsg, instance);
++	
++	// wait for remote...
++	retval = gmsg_vendor_kernel_wait_response(common->fsg, instance);
++	if (0 > retval )
++	{	// timeout or interrupted by a signal.
++		return 0;
++	}
++	pAMI_gadget_vendor_priv = &common->fsg->ami_gadget_vendor_priv[instance];
++	pResPkt = (GADGET_SCSI_PACKET*)pAMI_gadget_vendor_priv->usb_pkt_res;
++	pResData = &pResPkt->Data;
++	
++	len = pResPkt->DataLen;
++	
++	memcpy(buf, pResData, pResPkt->DataLen);
++	
++	if (0 == len)
++	{
++		printk("WARNING! LUN %d No handler ami_do_vendor_id len %d\n", common->lun, len);
++	}
++	
++	return len;
++}
++
+ static int do_scsi_command(struct fsg_common *common)
+ {
+ 	struct fsg_buffhd	*bh;
+@@ -2193,6 +2725,56 @@
+ 			reply = ami_do_get_event_status_notification(common, bh);
+ 		break;
+ 
++	/* SCSI vendor specific commands for AMI
++	 * 
++	 */
++	case SCSI_AMICMD_CURI_WRITE:
++		common->data_size_from_cmnd = common->data_size;
++		reply = ami_vendor_check_command(common, 10, DATA_DIR_FROM_HOST,
++							0x00, 0,
++							"CMD_CURI_WRITE");
++		if (reply)
++		{
++			printk("check vendor CMD_CURI_WRITE command error: %d,\n", reply);
++		}
++		else
++		{// printk("DBG, check SCSI_AMICMD_CURI_WRITE command error: %d,\n", reply);
++			reply = ami_do_vendor_write(common);
++			// reply = wrapper_do_vendor_write[redirection_mode](common, bh);
++		}
++		break;
++
++	case SCSI_AMICMD_CURI_READ:
++		common->data_size_from_cmnd = common->data_size;
++		reply = ami_vendor_check_command(common, 10, DATA_DIR_TO_HOST,
++							0x00, 0,
++							"CMD_CURI_READ");
++		if (reply)
++		{
++			printk("check vendor CMD_CURI_READ command error: %d,\n", reply);
++		}
++		else
++		{// printk("DBG, check SCSI_AMICMD_CURI_READ command error: %d,\n", reply);
++			// reply = wrapper_do_vendor_read[redirection_mode](common);
++			reply = ami_do_vendor_read(common, bh);
++		}
++		break;
++
++	case SCSI_AMICMD_ID:
++		common->data_size_from_cmnd = common->data_size;
++		reply = ami_vendor_check_command(common, 10, DATA_DIR_TO_HOST,
++							0x00, 0,
++							"CMD_ID");
++		if (reply)
++		{
++			printk("check vendor CMD_ID command error: %d,\n", reply);
++		}
++		else
++		{// printk("DBG, check SCSI_AMICMD_ID command error: %d,\n", reply);
++			reply = ami_do_vendor_id(common, bh);
++		}
++		break;
++
+ 	/*
+ 	 * Some mandatory commands that we recognize but don't implement.
+ 	 * They don't mean much in this setting.  It's left as an exercise
+@@ -3149,7 +3731,6 @@
+ 	{
+ 		case GADGET_MASS_STORAGE_NODE_TYPE_ID_CD:
+ 		{
+-
+ 			for (i = 0; i < max_luns; i += 1)
+ 			{
+ 				pAMI_gadget_priv = &fsg->ami_gadget_priv[i];
+@@ -3157,11 +3738,14 @@
+ 				{
+ 					printk("invalid lun %d for node type %d to init\n", i, node_type_id);
+ 					continue;
+-				}// printk("valid lun %d for node type %d to init\n", i, node_type_id);				
++				}// printk("valid lun %d for node type %d to init\n", i, node_type_id);
+ 
+ 				memset(&cd_usb_hw_res_pkt[i], 0x00, sizeof (cd_usb_hw_res_pkt[0]));
+ 				pAMI_gadget_priv->usb_pkt_res = cd_usb_hw_res_pkt[i];
+ 			}
++			pAMI_gadget_vendor_priv = &fsg->ami_gadget_vendor_priv[0];
++			pAMI_gadget_vendor_priv->usb_pkt_req = NULL;
++			pAMI_gadget_vendor_priv->usb_pkt_res = NULL;
+ 			break;
+ 		}
+ 		case GADGET_MASS_STORAGE_NODE_TYPE_ID_HD:
+@@ -3190,6 +3774,67 @@
+ 	}
+ }
+ 
++void gmsg_ami_init_device_ipmi_usb(struct fsg_dev *fsg, const unsigned int node_type_id)
++{	// IPMI USB ONLY.
++	int i = 0;
++	int max_luns = 0;
++	int count = 0;
++	AMI_GADGET_PRIV *pAMI_gadget_priv = NULL;
++	AMI_GADGET_PRIV *pAMI_gadget_vendor_priv = NULL;
++	
++	if (NULL == fsg)
++	{
++		printk("CRIT!!!, invalid fsg");
++		return ;
++	}
++	
++	if ( GADGET_MASS_STORAGE_NODE_TYPE_ID_MAX <= node_type_id)
++	{	// check boundary.
++		printk("invalid node type %d \n", node_type_id);
++		return ;
++	}
++	
++	count = (sizeof(fsg->ami_gadget_priv)/sizeof(AMI_GADGET_PRIV));
++	max_luns = min(MAX_AMI_VENDOR_USB_LUNS, count);
++	// printk("valid max luns %d for node type %d\n", max_luns, node_type_id);
++	// Initialize wait_queue and buffers.
++	init_waitqueue_head(&ipmi_cd_res_wait[0]);	//  "ONLY ONE instance" for kernel fsg thread with its' device node....
++	for (i = 0; i < max_luns; i += 1)
++	{
++		pAMI_gadget_priv = &fsg->ami_gadget_priv[i];
++		if (NULL == pAMI_gadget_priv)
++		{
++			printk("invalid lun %d for node type %d to init\n", i, node_type_id);
++			continue;
++		}// printk("valid lun %d for node type %d to init\n", i, node_type_id);
++		init_waitqueue_head(&ipmi_cd_req_wait[i]);
++		pAMI_gadget_priv->wait_req = &ipmi_cd_req_wait[i];
++		pAMI_gadget_priv->wait_res = &ipmi_cd_res_wait[0];	//  "ONLY ONE instance" for kernel fsg thread with its' device node....
++
++		memset(&ipmi_cd_usb_hw_req_pkt[i], 0x00, sizeof (ipmi_cd_usb_hw_req_pkt[0]));
++		memset(&ipmi_cd_usb_hw_res_pkt[i], 0x00, sizeof (ipmi_cd_usb_hw_res_pkt[0]));
++		pAMI_gadget_priv->usb_pkt_req = ipmi_cd_usb_hw_req_pkt[i];
++		pAMI_gadget_priv->usb_pkt_res = ipmi_cd_usb_hw_res_pkt[i];
++	}
++	
++	// init for ipmi usb feature.
++	count = (sizeof(fsg->ami_gadget_vendor_priv)/sizeof(AMI_GADGET_PRIV));
++	max_luns = min(MAX_AMI_VENDOR_USB_LUNS, count);
++	init_waitqueue_head(&vendor_req_wait[0]);	//  "ONLY ONE instance" for IPMI USB between kernel fsg thread with its' device node....
++	init_waitqueue_head(&vendor_res_wait[0]);	//  "ONLY ONE instance" for IPMI USB between kernel fsg thread with its' device node....
++	
++	pAMI_gadget_vendor_priv = &fsg->ami_gadget_vendor_priv[0];
++	pAMI_gadget_vendor_priv->wait_req = &vendor_req_wait[0];
++	pAMI_gadget_vendor_priv->wait_res = &vendor_res_wait[0];
++	
++	memset(&vendor_usb_hw_req_pkt[0], 0x00, sizeof (vendor_usb_hw_req_pkt[0]));
++	memset(&vendor_usb_hw_req_pkt[0], 0x00, sizeof (vendor_usb_hw_res_pkt[0]));
++	
++	pAMI_gadget_vendor_priv->usb_pkt_req = vendor_usb_hw_req_pkt[0];
++	pAMI_gadget_vendor_priv->usb_pkt_res = vendor_usb_hw_res_pkt[0];
++
++}
++
+ /* Functions for Device node */
+ static int f_msg_release(struct inode *inode, struct file *fd)
+ {
+@@ -3518,6 +4163,361 @@
+ 	return 0; // all right.
+ }
+ 
++
++static int gmsg_vendor_remote_wait_request(struct fsg_dev *fsg, const unsigned int Instance)
++{	// Handle the wait_queue of remote of IPMI USB to get host request.
++	int retval;
++	unsigned int node_type_id;
++	AMI_GADGET_PRIV *pAMI_gadget_vendor_priv = NULL;
++	if (NULL == fsg)
++	{
++		printk("CRIT!!!, invalid fsg");
++		return -1;
++	}
++	
++	node_type_id = fsg->node_type;
++	
++	if ( GADGET_IPMI_USB_NODE_TYPE_ID != node_type_id)
++	{	// check boundary.
++		printk("invalid IPMI node type %d \n", node_type_id);
++		return -1;
++	}
++	
++	if ( MAX_AMI_VENDOR_USB_LUNS <= Instance)
++	{	// check boundary.
++		printk("invalid IPMI instance %d for node type %d\n", Instance, node_type_id);
++		return -1;
++	}
++	
++	pAMI_gadget_vendor_priv = &fsg->ami_gadget_vendor_priv[Instance];
++	
++#if (0)
++	/* No matter what the mode of GADGET_REDIRECTION_MODE,
++	 * IPMI USB MUST be available for all redirection mode.
++	 */
++	if (GADGET_REDIRECTION_MODE_BYPASS != pAMI_gadget_vendor_priv->redirect_mode)
++	{	// check mode.
++		printk("invalid mode %d for lun %d\n", pAMI_gadget_vendor_priv->redirect_mode, Instance);
++		return -1;
++	}
++#endif
++	
++	retval = wait_event_interruptible(*pAMI_gadget_vendor_priv->wait_req, 
++				smp_load_acquire(&pAMI_gadget_vendor_priv->wake_up_state_req) ==
++					GADGET_REQ_STATE_WAKE_UP_SET);
++	if (retval)
++	{
++		printk("IPMI node type %d lun %d wait_request interrupted %d\n", node_type_id, Instance, retval);
++	}
++	else
++	{	// succeeded to wake up by kernel.
++		smp_store_release(&pAMI_gadget_vendor_priv->wake_up_state_req, GADGET_REQ_STATE_WAKE_UP_CLEAR);
++	}
++	if(1 == pAMI_gadget_vendor_priv->vendor_exit)
++	{
++		pAMI_gadget_vendor_priv->vendor_exit = 0;
++		return 1;
++	}
++#if (0)// debug...
++	switch(fsg->mass_storage_status)
++	{
++		case BUF_STATE_EMPTY:
++			printk("IPMI node type %d lun %d req status: empty\n", node_type_id, Instance);
++			break;
++		case BUF_STATE_FULL:
++			printk("IPMI node type %d lun %d req status: full\n", node_type_id, Instance);
++			break;
++	}
++#endif
++	return retval;
++}
++
++static int gmsg_vendor_remote_wake_up(struct fsg_dev *fsg, const unsigned int Instance)
++{	// wake up the upper layer of IPMI USB that wait for host request.
++	unsigned int node_type_id;
++	AMI_GADGET_PRIV *pAMI_gadget_vendor_priv = NULL;
++	if (NULL == fsg)
++	{
++		printk("CRIT!!!, invalid fsg");
++		return -1;
++	}
++	
++	node_type_id = fsg->node_type;
++	
++	if ( GADGET_IPMI_USB_NODE_TYPE_ID != node_type_id)
++	{	// check boundary.
++		printk("invalid IPMI node type %d \n", node_type_id);
++		return -1;
++	}
++	
++	if ( MAX_AMI_VENDOR_USB_LUNS <= Instance)
++	{	// check boundary.
++		printk("invalid IPMI instance %d for node type %d\n", Instance, node_type_id);
++		return -1;
++	}
++	
++	pAMI_gadget_vendor_priv = &fsg->ami_gadget_vendor_priv[Instance];
++	if (NULL == pAMI_gadget_vendor_priv)
++	{
++		printk("CRIT!!!, invalid IPMI priv\n");
++		return -1;
++	}
++	// printk("wake up LUN %d of node type %d gmsg_vendor_remote_wake_up \n", Instance, node_type_id);
++	
++	smp_store_release(&pAMI_gadget_vendor_priv->wake_up_state_req, GADGET_REQ_STATE_WAKE_UP_SET);
++	wake_up(pAMI_gadget_vendor_priv->wait_req);
++	return 0;
++}
++
++static int gmsg_vendor_kernel_wait_response(struct fsg_dev *fsg, const unsigned int Instance)
++{	// Handle the wait_queue of kernel thread to get remote response of IPMI USB.
++	int retval;
++	unsigned int node_type_id;
++	AMI_GADGET_PRIV *pAMI_gadget_vendor_priv = NULL;
++	GADGET_SCSI_PACKET *pReqPkt = NULL;
++	SCSI_COMMAND_PACKET *pScsiPkt = NULL;
++	if (NULL == fsg)
++	{
++		printk("CRIT!!!, invalid fsg");
++		return -1;
++	}
++	
++	node_type_id = fsg->node_type;
++	
++	if ( GADGET_IPMI_USB_NODE_TYPE_ID != node_type_id)
++	{	// check boundary.
++		printk("invalid IPMI node type %d \n", node_type_id);
++		return -1;
++	}
++	
++	if ( MAX_AMI_VENDOR_USB_LUNS <= Instance)
++	{	// check boundary.
++		printk("invalid IPMI instance %d for node type %d\n", Instance, node_type_id);
++		return -1;
++	}
++	
++	pAMI_gadget_vendor_priv = &fsg->ami_gadget_vendor_priv[Instance];
++	// printk("wait %d of node type %d gmsg_kernel_wait_response \n", Instance, node_type_id);
++	
++	retval = wait_event_interruptible_timeout(*pAMI_gadget_vendor_priv->wait_res, 
++				smp_load_acquire(&fsg->mass_storage_status) >=
++					BUF_STATE_FULL, AMI_VENDOR_WAIT_TIMEOUT);
++	switch (retval)
++	{
++		case 0:
++		{	// timeout....
++			pReqPkt = (GADGET_SCSI_PACKET *)pAMI_gadget_vendor_priv->usb_pkt_req;
++			pScsiPkt = &pReqPkt->CommandPkt;
++			printk("WARN!!! IPMI node type %d lun %d wait_response %02X timeout...\n", node_type_id, Instance, pScsiPkt->OpCode);
++			retval = -1;
++			break;
++		}
++		case 1:
++		{	// Good condition passed when timeout elapsed.
++			retval = 0;
++			break;
++		}
++		default:
++		{
++			if (0 > retval )
++			{	// interrupted...
++				pReqPkt = (GADGET_SCSI_PACKET *)pAMI_gadget_vendor_priv->usb_pkt_req;
++				pScsiPkt = &pReqPkt->CommandPkt;
++				printk("WARN!!! IPMI node type %d lun %d wait_response %02X signal %d\n", node_type_id, Instance, pScsiPkt->OpCode, retval);
++			}
++			else
++			{	//	Good condition passed before timeout elapsed. value is the remaining jiffies.
++				retval = 0;
++			}
++			break;
++		}
++	}
++	
++#if (0)// debug...
++	switch(fsg->mass_storage_status)
++	{
++		case BUF_STATE_EMPTY:
++			printk("IPMI node type %d lun %d res status: empty\n", node_type_id, Instance);
++			break;
++		case BUF_STATE_FULL:
++			printk("IPMI node type %d lun %d res status: full\n", node_type_id, Instance);
++			break;
++	}
++#endif
++	return retval;
++}
++
++static int gmsg_vendor_kernel_wake_up(struct fsg_dev *fsg, const unsigned int Instance)
++{	// wake up kernel thread that wait for remote response of IPMI USB.
++	unsigned int node_type_id;
++	AMI_GADGET_PRIV *pAMI_gadget_vendor_priv = NULL;
++	if (NULL == fsg)
++	{
++		printk("CRIT!!!, invalid fsg");
++		return -1;
++	}
++	
++	node_type_id = fsg->node_type;
++	
++	if ( GADGET_IPMI_USB_NODE_TYPE_ID != node_type_id)
++	{	// check boundary.
++		printk("invalid IPMI node type %d \n", node_type_id);
++		return -1;
++	}
++	
++	if ( MAX_AMI_VENDOR_USB_LUNS <= Instance)
++	{	// check boundary.
++		printk("invalid IPMI instance %d for node type %d\n", Instance, node_type_id);
++		return -1;
++	}
++	pAMI_gadget_vendor_priv = &fsg->ami_gadget_vendor_priv[Instance];
++	if (NULL == pAMI_gadget_vendor_priv)
++	{
++		printk("CRIT!!!, invalid priv\n");
++		return -1;
++	}
++	
++	wake_up(pAMI_gadget_vendor_priv->wait_res);
++	return 0;
++}
++/* Only copy data to kernel buffer for IPMI USB. */
++static int gmsg_vendor_receive_remote_response(struct fsg_dev *fsg, GADGET_SCSI_PACKET *pResPkt)
++{	// handle the response buffer for kernel with IPMI USB.
++	struct fsg_common *common = fsg->common;
++	// struct fsg_lun		*curlun = common->curlun;
++	uint32 SendSize;
++	int err;
++	GADGET_SCSI_PACKET *pPkt; // point to kernel space buffer.
++	unsigned int node_type_id;
++	AMI_GADGET_PRIV *pAMI_gadget_vendor_priv = NULL;
++	uint8 instance;
++	if (NULL == fsg)
++	{
++		printk("CRIT!!!, invalid fsg");
++		return -1;
++	}
++	
++	if (NULL == common)
++	{
++		printk("CRIT!!!, invalid fsg_common");
++		return -1;
++	}
++	
++	if (!pResPkt)
++		return -EFAULT;
++	
++	node_type_id = fsg->node_type;
++	
++	if (__copy_from_user((void *)(&instance), &pResPkt->CurrentLUN, sizeof(uint8)))
++	{
++		printk ("gmsg_vendor_receive_remote_response(): __copy_from_user failed\n");
++		return -EINVAL;
++	}
++	
++	if ( GADGET_IPMI_USB_NODE_TYPE_ID != node_type_id)
++	{	// check boundary.
++		printk("invalid node type %d \n", node_type_id);
++		return -1;
++	}
++	
++	if ( MAX_AMI_VENDOR_USB_LUNS <= instance)
++	{	// check boundary.
++		printk("gmsg_vendor_receive_remote_response invalid instance %d for node type %d\n", instance, node_type_id);
++		return -1;
++	}
++	
++	pAMI_gadget_vendor_priv = &fsg->ami_gadget_vendor_priv[instance];
++	if (NULL == pAMI_gadget_vendor_priv)
++	{
++		printk("CRIT!!!, invalid priv\n");
++		return -1;
++	}
++	
++	pPkt = (GADGET_SCSI_PACKET*)pAMI_gadget_vendor_priv->usb_pkt_res;
++	
++	err=__copy_from_user((void *)(pPkt), (void *)pResPkt, sizeof(GADGET_SCSI_PACKET));
++	if(err != 0)
++		printk("Copy data from user error1\n");
++	// 
++	SendSize = usb_long(pPkt->DataLen);
++	// printk("gmsg_vendor_receive_remote_response SendSize: %d\n", SendSize);
++	err=__copy_from_user((void *)(&(pPkt->Data)),(void *)&(pResPkt->Data), SendSize);
++	if(err != 0)
++		printk("Copy data from user error2\n");
++	
++	// wake up kernel thread to send data to host.
++	smp_store_release(&common->fsg->mass_storage_status, BUF_STATE_FULL);
++	gmsg_vendor_kernel_wake_up(fsg, instance);
++	
++	return err;
++}
++
++static int gmsg_vendor_send_host_request(struct fsg_dev *fsg, GADGET_SCSI_PACKET *pReqPkt)
++{	// handle the request buffer for remote.
++	// struct fsg_lun		*curlun = common->curlun;
++	GADGET_SCSI_PACKET *pPkt; // point to kernel space buffer.
++	unsigned int node_type_id;
++	AMI_GADGET_PRIV *pAMI_gadget_vendor_priv = NULL;
++	uint8 instance;
++	
++	if (NULL == fsg)
++	{
++		printk("CRIT!!!, invalid fsg");
++		return -1;
++	}
++	
++	if (!pReqPkt)
++		return -EFAULT;
++	
++	node_type_id = fsg->node_type;
++	
++	if (__copy_from_user((void *)(&instance), &pReqPkt->CurrentLUN, sizeof(uint8)))
++	{
++		printk ("gmsg_vendor_send_host_request(): __copy_from_user failed\n");
++		return -EINVAL;
++	}
++	
++	if ( GADGET_IPMI_USB_NODE_TYPE_ID != node_type_id)
++	{	// check boundary.
++		printk("invalid node type %d \n", node_type_id);
++		return -1;
++	}
++	
++	if ( MAX_AMI_VENDOR_USB_LUNS <= instance)
++	{	// check boundary.
++		printk("gmsg_vendor_send_host_request invalid instance %d for node type %d\n", instance, node_type_id);
++		return -1;
++	}
++	
++	pAMI_gadget_vendor_priv = &fsg->ami_gadget_vendor_priv[instance];
++	if (NULL == pAMI_gadget_vendor_priv)
++	{
++		printk("CRIT!!!, invalid priv\n");
++		return -1;
++	}
++	
++	pPkt = (GADGET_SCSI_PACKET*)pAMI_gadget_vendor_priv->usb_pkt_req;
++	
++	/* Copy kernel data area to user data area*/
++	if (__copy_to_user((void *)pReqPkt,(void *)pPkt,sizeof(GADGET_SCSI_PACKET)))
++	{
++		printk ("gmsg_vendor_send_host_request():__copy_to_user scsipkt failed for instance %d\n", instance);
++		return -EFAULT;
++	}
++
++	if(pPkt->DataLen)   /*if Data needs to be Xfered */
++	{
++		if(__copy_to_user((void *)(&(pReqPkt->Data)),(void *)(&(pPkt->Data)),
++						pPkt->DataLen))
++		{
++			printk ("gmsg_vendor_send_host_request():__copy_to_user data failed for instance %d\n", instance);
++			return -EFAULT;
++		}
++	}
++	// printk("pAMI_gadget_vendor_priv node type %d instance %d\n", node_type_id, instance);
++	return 0;
++}
++
+ // ref to ffs_ep0_ioctl, dev_ioctl, printer_ioctl.
+ static long ami_f_msg_ioctl(struct file *fd, unsigned int code, unsigned long arg)
+ {
+@@ -3527,7 +4527,7 @@
+ 	// struct usb_gadget *gadget = fsg->gadget; // for gadget ioctl....
+ 	// unsigned long		flags;
+ 	unsigned int node_type_id;
+-	LUN_INFO_CMD lun_info;
++	// LUN_INFO_CMD lun_info;
+ 	int			status = 0;
+ 
+ 	DBG(fsg, "ami_f_msg_ioctl: cmd=0x%4.4x, arg=%lu\n", code, arg);
+@@ -3566,7 +4566,48 @@
+ 			{
+ 				printk("something error with hd to send eject: %d\n", status);
+ 			}
+-			break;	
++			break;
++		// IPMI USB support.
++		case USB_VENDOR_REQ:	// AMI vendor request...
++			if (__copy_from_user((void *)(&Instance),&((GADGET_SCSI_PACKET*)arg)->CurrentLUN, sizeof(uint8)))
++			{
++				printk("ami_f_msg_ioctl(): USB_VENDOR_REQ __copy_from_user failed\n");
++				status = -EINVAL;
++				break;
++			}
++			// printk("USB_VENDOR_REQ cp from user. node type %d lun %d\n", node_type_id, Instance);
++			status = gmsg_vendor_remote_wait_request(fsg, Instance);
++			if (status)
++			{
++				printk("something error with ipmi to wait vnedor request: %d\n", status);
++				break;
++			}
++			status = gmsg_vendor_send_host_request(fsg, (GADGET_SCSI_PACKET *)arg);
++			if (status)
++			{
++				printk("something error with ipmi to send vnedor request: %d\n", status);
++			}
++			break;
++			
++		case USB_VENDOR_RES:	// AMI vendor response...
++			// printk("USB_VENDOR_RES cp from user\n");
++			status = gmsg_vendor_receive_remote_response(fsg, (GADGET_SCSI_PACKET *)arg);
++			if (status)
++			{
++				printk("something error with ipmi to receive vendor response: %d\n", status);
++			}// printk("vendor res lun: %d\n", Instance);
++			
++			break;
++			
++		case USB_VENDOR_EXIT:	// AMI vendor exit...
++			smp_store_release(&fsg->mass_storage_status, BUF_STATE_EMPTY);
++			status = gmsg_vendor_remote_wake_up(fsg, Instance);
++			if (status)
++			{
++				printk("something error with ipmi to exit: %d\n", status);
++			}// printk("vendor exit lun: %d\n", Instance);
++			fsg->ami_gadget_vendor_priv[Instance].vendor_exit = 1;
++			break;
+ 		default:
+ 			/* could not handle ioctl */
+ 			DBG(fsg, "ami_f_msg_ioctl: ERROR cmd=0x%4.4xis not supported\n",
+@@ -4249,7 +5290,7 @@
+ 		printk("DBG!fsg_alloc cdrom %d\n", common->luns[common->lun]->cdrom);
+ 	#endif
+ 		fsg->node_type = common->luns[common->lun]->cdrom;
+-
++		// Create device node for each mass-storage gadget.
+ 		if( strcmp(fi->group.cg_item.AMI_namebuf, "cdrom") == 0)
+ 		{
+ 			device = device_create(msg_class, NULL, dev, NULL,
+@@ -4266,6 +5307,12 @@
+ 			device = device_create(msg_class, NULL, dev, NULL,
+ 					   "%s%s", MSG_NODE_NAME_PREFIX, "port_b_hddisk"); // Deivce node named as usbport_b_hddisk.
+ 		}
++		else if( strcmp(fi->group.cg_item.AMI_namebuf, AMI_GADGET_NAME_IPMIUSB) == 0)
++		{
++			// fsg->function.bind	= fsg_bind_ipmi_usb;	// Assign a different bind function for ipmi_usb gadget.
++			device = device_create(msg_class, NULL, dev, NULL,
++						   "%s%s", MSG_NODE_NAME_PREFIX, "ipmi"); // Deivce node named as usbipmi.
++		}
+ 		else
+ 		{
+ 			printk("Unsupport Virtual Device\n");
+@@ -4275,8 +5322,15 @@
+ 			ret = PTR_ERR(device);
+ 			goto del;
+ 		}
+-
+-		gmsg_ami_init_device(fsg, fsg->node_type);
++		
++		if( strcmp(fi->group.cg_item.AMI_namebuf, AMI_GADGET_NAME_IPMIUSB) == 0)
++		{
++			gmsg_ami_init_device_ipmi_usb(fsg, fsg->node_type);
++		}
++		else
++		{
++			gmsg_ami_init_device(fsg, fsg->node_type);
++		}
+ 	}
+ #endif // end #if (1 == ENABLE_MASS_STORAGE_NODE)
+ 
