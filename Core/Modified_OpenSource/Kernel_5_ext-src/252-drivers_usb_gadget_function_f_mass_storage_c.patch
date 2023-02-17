@@ -1,0 +1,36 @@
+--- linux/drivers/usb/gadget/function/f_mass_storage.c	2023-01-31 10:36:44.783249000 +0800
++++ linux_new/drivers/usb/gadget/function/f_mass_storage.c	2023-01-31 18:10:32.717717000 +0800
+@@ -224,7 +224,15 @@
+ #include <linux/nospec.h>
+ 
+ #include "configfs.h"
++#include "../../../../../../include/projdef.h"
++#if defined(CONFIG_SPX_FEATURE_USB_IFC_PRIORITY_NORMAL) || defined(CONFIG_SPX_FEATURE_USB_IFC_PRIORITY_NORMAL_ANY) || \
++defined(CONFIG_SPX_FEATURE_USB_IFC_PRIORITY_HIGH) || defined(CONFIG_SPX_FEATURE_USB_IFC_PRIORITY_HIGH_ANY) 
++#define IPMI_USB_SUPPORT_ENABLE	(1)
+ 
++#else
++#define IPMI_USB_SUPPORT_ENABLE	(0)
++
++#endif
+ 
+ /*------------------------------------------------------------------------*/
+ 
+@@ -2724,7 +2732,7 @@
+ 		if (reply == 0)
+ 			reply = ami_do_get_event_status_notification(common, bh);
+ 		break;
+-
++#if (1 == IPMI_USB_SUPPORT_ENABLE)
+ 	/* SCSI vendor specific commands for AMI
+ 	 * 
+ 	 */
+@@ -2774,7 +2782,7 @@
+ 			reply = ami_do_vendor_id(common, bh);
+ 		}
+ 		break;
+-
++#endif	// end #if (1 == IPMI_USB_SUPPORT_ENABLE)
+ 	/*
+ 	 * Some mandatory commands that we recognize but don't implement.
+ 	 * They don't mean much in this setting.  It's left as an exercise
