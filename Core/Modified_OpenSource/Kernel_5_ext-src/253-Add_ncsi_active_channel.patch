@@ -1,0 +1,71 @@
+diff -Naur linux_org/net/ncsi/proc.c linux/net/ncsi/proc.c
+--- linux_org/net/ncsi/proc.c	2023-02-23 16:47:48.565456339 +0800
++++ linux/net/ncsi/proc.c	2023-02-23 16:45:37.998701797 +0800
+@@ -35,12 +35,15 @@
+ static int proc_initcomplete(struct ctl_table *ctl,int write,void *buffer,size_t *lenp,
+         					loff_t* pos);
+ static int proc_channellist(struct ctl_table *ctl,int write,void *buffer,size_t *lenp,loff_t* pos);
++static int proc_activencsi(struct ctl_table *ctl,int write,void *buffer,size_t *lenp, loff_t *pos);
+ 
+ static struct ctl_table_header *sys_ncsi  = NULL;
+ 
+ int verbose = 0;
+ int UserPackageID = 0;
+ int UserChannelID = 1;
++int ActiveChannel = 0xFF;
++int ActivePackage = 0xFF;
+ #ifdef CONFIG_SPX_FEATURE_NCSI_DEFAULT_INTERFACE
+ char UserInterface[8] = CONFIG_SPX_FEATURE_NCSI_DEFAULT_INTERFACE;
+ #else
+@@ -104,6 +107,8 @@
+     {.procname="UserInitEnabled" ,  .data=&UserInitEnabled,   	.maxlen=sizeof(int), .mode=0644, .proc_handler=&proc_dointvec },
+ #endif
+     {.procname="ChannelList"   ,  	.data=ChannelList,    		.maxlen=sizeof(ChannelList), .mode=0644, .proc_handler=&proc_channellist },
++    {.procname="ActiveChannel" , 	.data=&ActiveChannel, 		.maxlen=sizeof(ActiveChannel), .mode=0644, .proc_handler=&proc_activencsi},
++    {.procname="ActivePackage" , 	.data=&ActivePackage, 		.maxlen=sizeof(ActivePackage), .mode=0644, .proc_handler=&proc_activencsi},
+     {  }
+ };
+ 
+@@ -532,6 +537,42 @@
+ 	return proc_dointvec(ctl,write,buffer,lenp,pos);
+ }
+ 
++static 
++int 
++proc_activencsi(struct ctl_table *ctl,int write,void *buffer,size_t *lenp, loff_t *pos)
++{
++	struct net_device *dev;
++	struct ncsi_dev *nd;
++	struct ncsi_dev_priv *ndp;
++	struct ncsi_package *np;
++	struct ncsi_channel *nc;	
++	
++	dev = dev_get_by_name(&init_net,UserInterface);
++	if (dev == NULL)
++	{
++		printk("NCSI: ERROR: Unable to get device for %s\n",UserInterface);
++		return -ENODEV;
++	}
++		
++	/* Find the NCSI device */
++	nd = ncsi_find_dev(dev);
++	ndp = nd ? TO_NCSI_DEV_PRIV(nd) : NULL;
++	if (!ndp)
++		return -ENODEV;	
++
++	ActiveChannel = ActivePackage = 0xFF;
++	NCSI_FOR_EACH_PACKAGE(ndp, np) {
++		NCSI_FOR_EACH_CHANNEL(np, nc) {
++			if(ncsi_channel_has_link(nc) && nc->modes[NCSI_MODE_TX_ENABLE].enable) {
++				ActiveChannel = nc->id;
++				ActivePackage = np->id;
++			}
++		}
++    	}
++
++	return proc_dointvec(ctl,write,buffer,lenp,pos);
++}
++
+ int 
+ CreateProcSys(void)
+ {	

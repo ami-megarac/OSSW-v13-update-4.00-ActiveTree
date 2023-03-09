@@ -1,0 +1,160 @@
+--- linux-org/drivers/soc/aspeed/aspeed-lpc-pcc.c	2023-02-08 15:32:22.447752981 +0800
++++ linux/drivers/soc/aspeed/aspeed-lpc-pcc.c	2023-02-08 15:38:27.099749575 +0800
+@@ -17,6 +17,12 @@
+ #include <linux/regmap.h>
+ #include <linux/dma-mapping.h>
+ 
++#include <linux/miscdevice.h>
++#include <linux/device.h>
++#include <linux/ioctl.h>
++
++#include <linux/slab.h>
++
+ #define DEVICE_NAME "aspeed-lpc-pcc"
+ 
+ #define LHCR5	0x0b4
+@@ -74,8 +80,11 @@
+ 
+ 
+ #define PCC_DMA_MAX_BUFSZ	(PAGE_SIZE)
++#define IPMI_MAX_BUF 512
+ #define PCC_MAX_PATNM		2
+ 
++#define READ_POST_CODE  _IOR('s', 0, int)
++
+ enum pcc_fifo_threshold {
+ 	PCC_FIFO_THR_1_BYTE,
+ 	PCC_FIFO_THR_1_EIGHTH,
+@@ -135,7 +144,7 @@
+ 
+ 	struct pcc_pattern pat_search[PCC_MAX_PATNM];
+ 
+-	struct kfifo fifo;
++	struct kfifo fifo, second_fifo;
+ 	wait_queue_head_t wq;
+ 
+ 	struct miscdevice misc_dev;
+@@ -195,10 +204,57 @@
+ 	return !kfifo_is_empty(&pcc->fifo) ? POLLIN : 0;
+ }
+ 
++static long pcc_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
++{
++    int ret = 0;
++    ssize_t copied;
++
++	struct aspeed_pcc *pcc = container_of(
++			file->private_data,
++			struct aspeed_pcc,
++			misc_dev);
++
++
++    unsigned char* buffer = (unsigned char*) arg;
++    unsigned char* databuf = NULL;
++    unsigned int size = 0;
++    databuf = kmalloc(IPMI_MAX_BUF, GFP_KERNEL);
++
++    if (!databuf)
++    {
++        return -ENOMEM;
++    }
++
++    switch(cmd)
++    {
++        case READ_POST_CODE:
++        //printk("pcc->second_fifo_len: %x\n", kfifo_len(&pcc->second_fifo));
++	    if (kfifo_is_empty(&pcc->second_fifo)) {
++		    if (file->f_flags & O_NONBLOCK)
++			    return -EAGAIN;
++    		ret = wait_event_interruptible(pcc->wq,
++	    			!kfifo_is_empty(&pcc->second_fifo));
++		    if (ret == -ERESTARTSYS)
++			    return -EINTR;
++    	}
++        
++	    ret = kfifo_to_user(&pcc->second_fifo, buffer, IPMI_MAX_BUF, &copied);
++	    return ret ? ret : copied;
++            break;
++        default:
++            kfree(databuf);
++            return -1;
++    }
++
++    kfree(databuf);
++    return size;
++}
++
+ static const struct file_operations pcc_fops = {
+ 	.owner = THIS_MODULE,
+ 	.read = aspeed_pcc_file_read,
+ 	.poll = aspeed_pcc_file_poll,
++    .unlocked_ioctl = pcc_ioctl,
+ };
+ 
+ static void aspeed_pcc_dma_tasklet(unsigned long arg)
+@@ -209,11 +265,14 @@
+ 	u8 has_data = 0;
+ 
+ 	struct aspeed_pcc *pcc = (struct aspeed_pcc*)arg;
+-	struct kfifo *fifo = &pcc->fifo;
++	struct kfifo *fifo = &pcc->fifo, *second_fifo = &pcc->second_fifo;
+ 
+ 	if (!kfifo_initialized(fifo))
+ 		return;
+ 
++	if (!kfifo_initialized(second_fifo))
++		return;
++
+ 	if (regmap_read(pcc->regmap, PCCR6, &reg))
+ 		return;
+ 
+@@ -226,6 +285,11 @@
+ 		if (kfifo_is_full(fifo))
+ 			kfifo_skip(fifo);
+ 		kfifo_put(fifo, pcc->dma.virt[pre_dma_idx]);
++
++		if (kfifo_is_full(second_fifo))
++			kfifo_skip(second_fifo);
++		kfifo_put(second_fifo, pcc->dma.virt[pre_dma_idx]);
++
+ 		pre_dma_idx = (pre_dma_idx + 1) % PCC_DMA_MAX_BUFSZ;
+ 	} while (pre_dma_idx != cur_dma_idx);
+ 
+@@ -279,6 +343,10 @@
+ 					kfifo_skip(&pcc->fifo);
+ 				kfifo_put(&pcc->fifo, val & PCCR3_FIFO_DATA_MASK);
+ 
++				if (kfifo_is_full(&pcc->second_fifo)) //gura
++					kfifo_skip(&pcc->second_fifo);
++				kfifo_put(&pcc->second_fifo, val & PCCR3_FIFO_DATA_MASK);
++
+ 				if (regmap_read(pcc->regmap, PCCR2, &val))
+ 					break;
+ 			} while (val & PCCR2_DATA_RDY);
+@@ -396,6 +464,10 @@
+ 	if (rc)
+ 		goto err_free_dma;
+ 
++	rc = kfifo_alloc(&pcc->second_fifo, PAGE_SIZE, GFP_KERNEL);
++	if (rc)
++		goto err_free_dma;
++
+ 	pcc->misc_dev.parent = dev;
+ 	pcc->misc_dev.name = devm_kasprintf(dev, GFP_KERNEL, "%s", DEVICE_NAME);
+ 	pcc->misc_dev.fops = &pcc_fops;
+@@ -429,6 +501,7 @@
+ 
+ err_free_kfifo:
+ 	kfifo_free(&pcc->fifo);
++	kfifo_free(&pcc->second_fifo);
+ err_free_dma:
+ 	if (pcc->dma_mode) {
+ 		if (pcc->dma.static_mem)
+@@ -460,6 +533,7 @@
+ 
+ 	misc_deregister(&pcc->misc_dev);
+ 	kfifo_free(&pcc->fifo);
++	kfifo_free(&pcc->second_fifo);
+ 
+ 	return 0;
+ }
