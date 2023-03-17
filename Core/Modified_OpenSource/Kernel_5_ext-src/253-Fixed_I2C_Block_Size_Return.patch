@@ -1,0 +1,52 @@
+diff -Naur linux_old/drivers/i2c/i2c-core-smbus.c linux/drivers/i2c/i2c-core-smbus.c
+--- linux_old/drivers/i2c/i2c-core-smbus.c	2023-02-16 15:28:47.950916584 +0800
++++ linux/drivers/i2c/i2c-core-smbus.c	2023-03-03 15:55:13.078168130 +0800
+@@ -253,7 +253,7 @@
+ 	union i2c_smbus_data data;
+ 
+ 	if (length > I2C_SMBUS_BLOCK_MAX)
+-		length = I2C_SMBUS_BLOCK_MAX;
++		return -EOVERFLOW;
+ 	data.block[0] = length;
+ 	memcpy(&data.block[1], values, length);
+ 	return i2c_smbus_xfer(client->adapter, client->addr, client->flags,
+@@ -270,7 +270,7 @@
+ 	int status;
+ 
+ 	if (length > I2C_SMBUS_BLOCK_MAX)
+-		length = I2C_SMBUS_BLOCK_MAX;
++		return -EOVERFLOW;
+ 	data.block[0] = length;
+ 	status = i2c_smbus_xfer(client->adapter, client->addr, client->flags,
+ 				I2C_SMBUS_READ, command,
+@@ -289,7 +289,7 @@
+ 	union i2c_smbus_data data;
+ 
+ 	if (length > I2C_SMBUS_BLOCK_MAX)
+-		length = I2C_SMBUS_BLOCK_MAX;
++		return -EOVERFLOW;
+ 	data.block[0] = length;
+ 	memcpy(data.block + 1, values, length);
+ 	return i2c_smbus_xfer(client->adapter, client->addr, client->flags,
+@@ -649,7 +649,7 @@
+ 	int status;
+ 
+ 	if (length > I2C_SMBUS_BLOCK_MAX)
+-		length = I2C_SMBUS_BLOCK_MAX;
++    return -EOVERFLOW;
+ 
+ 	if (i2c_check_functionality(client->adapter, I2C_FUNC_SMBUS_READ_I2C_BLOCK))
+ 		return i2c_smbus_read_i2c_block_data(client, command, length, values);
+diff -Naur linux_old/include/uapi/linux/i2c.h linux/include/uapi/linux/i2c.h
+--- linux_old/include/uapi/linux/i2c.h	2023-02-07 14:47:27.755361778 +0800
++++ linux/include/uapi/linux/i2c.h	2023-03-03 15:59:00.763946826 +0800
+@@ -131,8 +131,7 @@
+ /*
+  * Data for SMBus Messages
+  */
+-//#define I2C_SMBUS_BLOCK_MAX	32	/* As specified in SMBus standard */
+-#define I2C_SMBUS_BLOCK_MAX	240	/* As specified in SMBus standard */
++#define I2C_SMBUS_BLOCK_MAX	253	/* As specified in SMBus standard */
+ union i2c_smbus_data {
+ 	__u8 byte;
+ 	__u16 word;
