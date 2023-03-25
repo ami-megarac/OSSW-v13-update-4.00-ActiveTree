@@ -1,0 +1,22 @@
+--- linux/drivers/jtag/jtag-aspeed-internal.c	2023-03-13 04:16:56.864000164 -0400
++++ new_linux/drivers/jtag/jtag-aspeed-internal.c	2023-03-14 02:23:52.306567923 -0400
+@@ -322,7 +322,8 @@
+ 			  JTAG_SW_MODE_EN | (TMS * JTAG_SW_MODE_TMS) |
+ 				  (TDI * JTAG_SW_MODE_TDIO),
+ 			  ASPEED_JTAG_SW);
+-
++        //Push th register write from above to the ARM CPU to the IO by doing a dummy read
++	(void)aspeed_jtag_read(aspeed_jtag, ASPEED_JTAG_SW);
+ 	/* Target device have their operating frequency*/
+ 	ndelay(aspeed_jtag->sw_delay);
+ 
+@@ -332,7 +333,8 @@
+ 				  (TMS * JTAG_SW_MODE_TMS) |
+ 				  (TDI * JTAG_SW_MODE_TDIO),
+ 			  ASPEED_JTAG_SW);
+-
++	//Push th register write from above to the ARM CPU to the IO by doing a dummy read
++	(void)aspeed_jtag_read(aspeed_jtag, ASPEED_JTAG_SW);
+ 	ndelay(aspeed_jtag->sw_delay);
+ 	/* Sampled TDI(slave, master's TDO) on the rising edge */
+ 	if (aspeed_jtag_read(aspeed_jtag, ASPEED_JTAG_SW) & JTAG_SW_MODE_TDIO)

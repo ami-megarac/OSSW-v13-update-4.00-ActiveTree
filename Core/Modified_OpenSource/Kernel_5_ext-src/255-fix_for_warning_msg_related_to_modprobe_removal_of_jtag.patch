@@ -1,0 +1,21 @@
+--- ori_linux/drivers/jtag/jtag.c	2023-03-16 07:11:58.329149723 -0400
++++ linux/drivers/jtag/jtag.c	2023-03-17 04:05:09.861367839 -0400
+@@ -350,6 +350,7 @@
+ 	misc_deregister(&jtag->miscdev);
+ 	kfree(jtag->miscdev.name);
+ 	ida_simple_remove(&jtag_ida, jtag->id);
++	jtag_free(jtag);//AMI's fix
+ }
+ 
+ static void asd_jtag_unregister(struct jtag *jtag)
+--- ori_linux/drivers/jtag/jtag-aspeed-internal.c	2023-03-20 09:45:36.992844170 -0400
++++ linux/drivers/jtag/jtag-aspeed-internal.c	2023-03-20 09:44:08.081221901 -0400
+@@ -1151,7 +1151,7 @@
+ 
+ 	aspeed_jtag = jtag_priv(jtag);
+ 	reset_control_assert(aspeed_jtag->reset);
+-	jtag_free(jtag);
++	//jtag_free(jtag); //AMI's fix, jtag_free(jtag) be moved to jtag_unregister function, avoid kernel print a warning message while executing 'modprobe -r jtag-aspeed-internal' driver.
+ 	return 0;
+ }
+ 
