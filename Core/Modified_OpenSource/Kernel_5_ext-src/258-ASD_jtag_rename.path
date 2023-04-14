@@ -1,0 +1,12 @@
+diff -Naur linux_old/drivers/jtag/jtag.c linux/drivers/jtag/jtag.c
+--- linux_old/drivers/jtag/jtag.c	2023-03-25 16:39:12.520823950 +0800
++++ linux/drivers/jtag/jtag.c	2023-03-25 16:40:05.656822246 +0800
+@@ -324,7 +324,7 @@
+ 
+ 	jtag->miscdev.fops =  &jtag_fops;
+ 	jtag->miscdev.minor = MISC_DYNAMIC_MINOR;
+-	jtag->miscdev.name = kasprintf(GFP_KERNEL, "asd_jtag%d", id);
++	jtag->miscdev.name = kasprintf(GFP_KERNEL, "debug_jtag%d", id);
+ 
+ 	if (!jtag->miscdev.name) {
+ 		err = -ENOMEM;
