@@ -1,0 +1,97 @@
+diff -Naur linux_org/net/ncsi/internal.h linux/net/ncsi/internal.h
+--- linux_org/net/ncsi/internal.h	2023-04-24 10:43:42.532374216 +0800
++++ linux/net/ncsi/internal.h	2023-04-24 10:43:23.373122633 +0800
+@@ -365,6 +365,7 @@
+ extern spinlock_t ncsi_dev_lock;
+ extern int InitComplete;
+ extern int verbose;
++extern int UserDetect;
+ 
+ #define TO_NCSI_DEV_PRIV(nd) \
+ 	container_of(nd, struct ncsi_dev_priv, ndev)
+diff -Naur linux_org/net/ncsi/ncsi-manage.c linux/net/ncsi/ncsi-manage.c
+--- linux_org/net/ncsi/ncsi-manage.c	2023-04-24 15:33:06.490085475 +0800
++++ linux/net/ncsi/ncsi-manage.c	2023-04-24 15:33:54.704202086 +0800
+@@ -2002,6 +2002,16 @@
+ {
+ 	struct ncsi_dev_priv *ndp = TO_NCSI_DEV_PRIV(nd);
+ 
++#ifdef CONFIG_SPX_FEATURE_NCSI_MANUAL_DETECT
++	if(UserDetect == 0)
++	{
++		return 0;
++	} else {
++		InitComplete = 0;
++		dev_updown = 0;
++	}
++#endif
++	
+ 	if (dev_updown)		
+ 		return 0;
+ 
+diff -Naur linux_org/net/ncsi/proc.c linux/net/ncsi/proc.c
+--- linux_org/net/ncsi/proc.c	2023-04-24 10:43:47.768169685 +0800
++++ linux/net/ncsi/proc.c	2023-04-24 11:05:39.960911446 +0800
+@@ -29,7 +29,9 @@
+ static int proc_setvlanid(struct ctl_table *ctl,int write,void *buffer,size_t *lenp,loff_t* pos);
+ static int proc_vetobit(struct ctl_table *ctl,int write,void *buffer,size_t *lenp,loff_t* pos);
+ static int proc_bmc2host(struct ctl_table *ctl,int write,void *buffer,size_t *lenp,loff_t* pos);
++#ifdef CONFIG_SPX_FEATURE_NCSI_MANUAL_DETECT
+ static int proc_detect(struct ctl_table *ctl,int write,void *buffer,size_t *lenp,loff_t* pos);
++#endif
+ static int proc_setflowcontrol(struct ctl_table *ctl,int write,void *buffer,size_t *lenp,
+         					loff_t* pos);
+ static int proc_initcomplete(struct ctl_table *ctl,int write,void *buffer,size_t *lenp,
+@@ -100,7 +102,9 @@
+     {.procname="VetoBit",  			.data=&UserVetoBit, 		.maxlen=sizeof(int), .mode=0644, .proc_handler=&proc_dointvec },
+     {.procname="ControlVetoBit"  ,  .data=&UserControlVetoBit,  .maxlen=sizeof(int), .mode=0644, .proc_handler=&proc_vetobit },    
+     {.procname="ControlBMC2Host"  , .data=&UserControlBMC2Host, .maxlen=sizeof(int), .mode=0644, .proc_handler=&proc_bmc2host },	
++#ifdef CONFIG_SPX_FEATURE_NCSI_MANUAL_DETECT
+     {.procname="Detect"   ,  		.data=&UserDetect,    		.maxlen=sizeof(int), .mode=0644, .proc_handler=&proc_detect },
++#endif
+     {.procname="Flowcontrol", 		.data=&UserFlowcontrol, 	.maxlen=sizeof(int), .mode=0644, .proc_handler=&proc_setflowcontrol },
+     {.procname="InitComplete"   ,   .data=&InitComplete,   		.maxlen=sizeof(int), .mode=0644, .proc_handler=&proc_initcomplete },
+ #ifdef CONFIG_SPX_FEATURE_NCSI_RESET_INTERFACE_IN_USER_SETTINGS
+@@ -264,6 +268,7 @@
+  	return retval;
+ } 
+ 
++#ifdef CONFIG_SPX_FEATURE_NCSI_MANUAL_DETECT
+ /* This is a function Called when something is written to sysctl "Detect " */
+ static
+ int 
+@@ -272,6 +277,8 @@
+     int retval;
+ 	struct net_device *dev;
+ 	struct ncsi_dev *nd;
++	struct ncsi_dev_priv *ndp;
++	struct ncsi_package *np, *tmp;
+ 	
+     retval = proc_dointvec(ctl,write,buffer,lenp,pos);
+ 
+@@ -293,15 +300,20 @@
+ 		
+ 	/* Find the NCSI device */
+ 	nd = ncsi_find_dev(dev);
+-    
+-#ifdef CONFIG_SPX_FEATURE_NCSI_MANUAL_DETECT
++	ndp = nd ? TO_NCSI_DEV_PRIV(nd) : NULL;
++	if (!ndp)
++		return retval;	
++	
+     ncsi_stop_dev(nd);
+-    msleep(4000);
++    list_for_each_entry_safe(np, tmp, &ndp->packages, node)
++	ncsi_remove_package(np);
++    ndp->flags = 0;
++    msleep(1000);
+     ncsi_start_dev(nd);
+-#endif
++
+     return retval;
+ } 
+-
++#endif
+ 
+ /* This is a function Called when something is written to sysctl "VlanID " */
+ static
