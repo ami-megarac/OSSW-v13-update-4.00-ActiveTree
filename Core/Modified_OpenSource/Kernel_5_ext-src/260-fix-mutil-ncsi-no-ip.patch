@@ -1,0 +1,80 @@
+diff -Naur linux-ori/net/ncsi/ncsi-manage.c linux/net/ncsi/ncsi-manage.c
+--- linux-ori/net/ncsi/ncsi-manage.c	2023-04-26 10:24:21.684025924 +0800
++++ linux/net/ncsi/ncsi-manage.c	2023-04-26 10:27:22.325698851 +0800
+@@ -28,7 +28,9 @@
+ 
+ extern int CreateProcSys(void);
+ extern int RemoveProcSys(void);
+-int dev_updown;
++
++static int NcsiDevNum=0;
++static int InitCompleteCount =0;
+ 
+ bool ncsi_channel_has_link(struct ncsi_channel *channel)
+ {
+@@ -1786,8 +1788,14 @@
+ 		}
+ 	}
+ 	
+-	dev_updown = 0;
+-	InitComplete = 1;
++
++	if (InitComplete == 0) {
++		InitCompleteCount += 1;
++		if (InitCompleteCount == NcsiDevNum) {
++			InitComplete = 1;
++		} // if
++	} // if
++
+ 	ncsi_report_link(ndp, false);
+ 	return -ENODEV;
+ }
+@@ -1993,7 +2001,8 @@
+ #endif
+ 	CreateProcSys();
+ 	InitComplete = 0;
+-	
++	NcsiDevNum += 1;
++
+ 	return nd;
+ }
+ EXPORT_SYMBOL_GPL(ncsi_register_dev);
+@@ -2008,17 +2017,13 @@
+ 		return 0;
+ 	} else {
+ 		InitComplete = 0;
+-		dev_updown = 0;
+ 	}
+ #endif
+ 	
+-	if (dev_updown)		
+-		return 0;
+ 
+ 	if(InitComplete) {
+ 		netdev_dbg(ndp->ndev.dev, "NCSI device state = %u\n", nd->state);
+ 		netdev_dbg(ndp->ndev.dev, "NCSI device flag = %u\n", ndp->flags);
+-		dev_updown = 1;
+ 		ncsi_reset_dev(nd);
+ 		return 0;
+ 	} // if
+@@ -2047,9 +2052,6 @@
+ 	int old_state;
+ 	unsigned long flags;
+ 	
+-	if (dev_updown)
+-		return;
+-
+ 	if(InitComplete) {
+ 		return;
+ 	} // if
+@@ -2152,6 +2154,10 @@
+ 		ndp->polling.id = 32;	
+ 		ndp->polling.status = 0;
+ 		InitComplete = 0;
++		if (InitCompleteCount > 0) {
++			InitCompleteCount -= 1;
++		} // if
++
+ #ifdef CONFIG_SPX_FEATURE_NCSI_GET_LINK_STATUS_FOR_NON_AEN_SUPPORTED_CONTROLLERS
+ 		flush_work(&ndp->polling_work);
+ #endif
