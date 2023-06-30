@@ -5,7 +5,7 @@ Format: 3.0 (quilt)
 Source: openssl
 Binary: openssl, libssl1.1, libcrypto1.1-udeb, libssl1.1-udeb, libssl-dev, libssl-doc
 Architecture: any all
-Version: 1.1.1n-0+deb11u4
+Version: 1.1.1n-0+deb11u5
 Maintainer: Debian OpenSSL Team <pkg-openssl-devel@lists.alioth.debian.org>
 Uploaders: Christoph Martin <christoph.martin@uni-mainz.de>, Kurt Roeckx <kurt@roeckx.be>, Sebastian Andrzej Siewior <sebastian@breakpoint.cc>
 Homepage: https://www.openssl.org/
@@ -25,29 +25,27 @@ Package-List:
 Checksums-Sha1:
  4b0936dd798f60c97c68fc62b73033ecba6dfb0c 9850712 openssl_1.1.1n.orig.tar.gz
  7c47f949298c841ec022afffb8378de7179b9378 488 openssl_1.1.1n.orig.tar.gz.asc
- bb5b5453e765aa7ecf1c24474f07537a0b269c9e 131388 openssl_1.1.1n-0+deb11u4.debian.tar.xz
+ fe71ab8df190172227e94704d1edbe79bd313d16 141712 openssl_1.1.1n-0+deb11u5.debian.tar.xz
 Checksums-Sha256:
  40dceb51a4f6a5275bde0e6bf20ef4b91bfc32ed57c0552e2e8e15463372b17a 9850712 openssl_1.1.1n.orig.tar.gz
  e0e89e9467102880ee6f2ee8c1413933eb1268969afb97b9bec61e2190a62fd0 488 openssl_1.1.1n.orig.tar.gz.asc
- c8c5ba101d3d048782f09beaf7e5a56833ffafb5506211bbb2fc726fba9d7d73 131388 openssl_1.1.1n-0+deb11u4.debian.tar.xz
+ b9e6eb5bd11c2bafb63a6df6f786cc72f9d94b16b66ceadaf3a2971127a31836 141712 openssl_1.1.1n-0+deb11u5.debian.tar.xz
 Files:
  2aad5635f9bb338bc2c6b7d19cbc9676 9850712 openssl_1.1.1n.orig.tar.gz
  55cfa25c4358a6e2f8bb6ad7dd0b9f93 488 openssl_1.1.1n.orig.tar.gz.asc
- d52e42fd720c846e09fa16023cc09922 131388 openssl_1.1.1n-0+deb11u4.debian.tar.xz
+ f3406d63715f58073e91c3dd89598865 141712 openssl_1.1.1n-0+deb11u5.debian.tar.xz
 
 -----BEGIN PGP SIGNATURE-----
 
-iQIzBAEBCgAdFiEEZCVGlf/wqkRmzBnme5boFiqM9dEFAmPiOd8ACgkQe5boFiqM
-9dEQ0BAArOBKaTHgXdaE9XirD2wG+aSeF+6eOVG+uT3GIBssvN1H/Vw7f6AXIONM
-1AXAsauh1nbkiAaPdq/KXv2ufZHPDaos6xg/gMA/ujva5fecYUHLtjwu+nAdb+oo
-pHTHNUyzrr4Rgz1X/KFFqcsywC681oXpPCgBHWKtJAaPRFPq+dT/GmeF0iVoaixs
-bMVJaElHbkIcH9oD/Gm3I9ruWY5enmT+TFYgEcTGn0t0zx5OtkBOn6ny9ziAyIhE
-GwblusA0Y0XabXmEjvaiPs0YiUOnRxEldessqpAI1UAhgosRj+EBesPlqQi5bSPe
-sIy4s7i22S/UTMCy+HFs2Ji0i6meCs0EDRpUfUt9qYUfI6hZwhcWxCpiudi4uGVB
-jKgQOO4NK252ZrSD5MgE6pAaMVkkzs83sWkx+uQY9aUqWq+4XS7yIVWycY6/RREf
-JL4Bplq1I93qaEIQnNw975bIWSoLHughTncsx+C4fUXfPeHV0/bpkCkoJHoK3LTr
-TeJJAyhFmliuZhe8XvOupiE2hKUYHrwciE0gHyHdaNh7ISoEKa/atKWE70TurUjp
-EigUKw2yfpw8mu++/Rg8oDQMs0hsj1Q3/LRdjeLohIUdq4NyGu465ePVtGZBNxVm
-pc610f9raMmV9OkKGelzAFXixLlEznTwf7JwLjQzSkGQIZ1FxRQ=
-=dUj4
+iQGzBAEBCgAdFiEEV4kucFIzBRM39v3RBWQfF1cS+lsFAmR0gl8ACgkQBWQfF1cS
++lsOvwv+OnxR16/SnLYPqafe5GDvsvJ0ROkrVPTwE3bWidxQXKpBJqC11Sg6EI6p
+t4YKStDEVU94qmcoO18KjFvnWFXxeN2D5OTnc0ofueDplecvXRTmJ5M1y84W+xBL
+lcXLncQ/YuBU9NRTXBOF6AuVSJBP2ADIl3JnEdYTvZHVwX6g4Orx3Nao/Xedkdgy
+3yC+OmIHq/9XufauYLqZQtF7NyL/uJygyKu44OnucyEd9dYRI/2hkYBUXhhgvm+Q
+llDqir7MXfZYo1zG8qMLRHqARpi2mc1w5M5fA0OhUIW5qsmhrvk+IOBPoanA0bTX
+LRM5pFyPX4jHsZZEpQQ7rG5zgPvOCvOMGNN+7MuxgGhN5QqU2GElyEL3TmEPVaid
+yyOhsfU0tzCynGRFXbemMziCNZ2ZDPwWURb8XrjjF0XscvQaOdvCNZCdcRmCQFWG
+eSdVIOS38h836PWP1nHkdFXEJZUmLPfgo5C4ugpY97SURl47wStwFOl7lIifnAY5
+r9hVy7Tf
+=d9Br
 -----END PGP SIGNATURE-----
