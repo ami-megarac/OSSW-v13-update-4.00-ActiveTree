@@ -1,0 +1,11 @@
+--- linux/drivers/usb/gadget/function/storage_common.h	2023-08-25 08:57:20.435355293 +0800
++++ linux.new/drivers/usb/gadget/function/storage_common.h	2023-08-25 08:59:50.619454611 +0800
+@@ -128,7 +128,7 @@
+ }
+ 
+ /* Default size of buffer length. */
+-#define FSG_BUFLEN	((u32)16384)
++#define FSG_BUFLEN	((u32)32768)
+ 
+ /* Maximal number of LUNs supported in mass storage function */
+ #define FSG_MAX_LUNS	16
