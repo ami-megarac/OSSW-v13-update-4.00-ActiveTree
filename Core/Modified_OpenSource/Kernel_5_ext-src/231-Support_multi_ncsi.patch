@@ -1,0 +1,149 @@
+diff -Naur linux-org/net/ncsi/ncsi-manage.c linux/net/ncsi/ncsi-manage.c
+--- linux-org/net/ncsi/ncsi-manage.c	2022-09-27 18:43:35.442430506 +0800
++++ linux/net/ncsi/ncsi-manage.c	2022-09-27 18:47:51.140548202 +0800
+@@ -2193,4 +2193,4 @@
+ 	
+ 	return ret;	
+ }
+-EXPORT_SYMBOL_GPL(ncsi_disable_dev);
+\ No newline at end of file
++EXPORT_SYMBOL_GPL(ncsi_disable_dev);
+diff -Naur linux-org/net/ncsi/proc.c linux/net/ncsi/proc.c
+--- linux-org/net/ncsi/proc.c	2022-09-27 18:43:35.442430506 +0800
++++ linux/net/ncsi/proc.c	2022-09-27 18:48:09.568616236 +0800
+@@ -55,7 +55,7 @@
+ int UserSetLink=0;
+ int UserAutoNeg=0;
+ int UserDetect=0;
+-int InitComplete=1;
++int InitComplete=0;
+ #ifdef CONFIG_SPX_FEATURE_NCSI_RESET_INTERFACE_IN_USER_SETTINGS
+ int UserInitEnabled=0;
+ #endif
+@@ -80,6 +80,7 @@
+ int ReEnable = 0;
+ int UserSetMAC = 0;
+ 
++static bool isNcsiTableCreated = false;
+ static struct ctl_table SysNcsiTable[] = 
+ {
+     {.procname="DebugLevel", 		.data=&verbose,       		.maxlen=sizeof(int), .mode=0644, .proc_handler=&proc_dointvec },
+@@ -98,7 +99,7 @@
+     {.procname="ControlBMC2Host"  , .data=&UserControlBMC2Host, .maxlen=sizeof(int), .mode=0644, .proc_handler=&proc_bmc2host },	
+     {.procname="Detect"   ,  		.data=&UserDetect,    		.maxlen=sizeof(int), .mode=0644, .proc_handler=&proc_detect },
+     {.procname="Flowcontrol", 		.data=&UserFlowcontrol, 	.maxlen=sizeof(int), .mode=0644, .proc_handler=&proc_setflowcontrol },
+-    {.procname="InitComplete"   ,   .data=&InitComplete,   		.maxlen=sizeof(int), .mode=0444, .proc_handler=&proc_initcomplete },
++    {.procname="InitComplete"   ,   .data=&InitComplete,   		.maxlen=sizeof(int), .mode=0644, .proc_handler=&proc_initcomplete },
+ #ifdef CONFIG_SPX_FEATURE_NCSI_RESET_INTERFACE_IN_USER_SETTINGS
+     {.procname="UserInitEnabled" ,  .data=&UserInitEnabled,   	.maxlen=sizeof(int), .mode=0644, .proc_handler=&proc_dointvec },
+ #endif
+@@ -190,7 +191,9 @@
+ 	struct ncsi_dev *nd;
+ 	struct ncsi_dev_priv *ndp;
+ 	struct ncsi_package *np;
+-	
++	struct ncsi_channel *nc;
++	unsigned char id = 0;
++
+ 	retval = proc_dointvec(ctl,write,buffer,lenp,pos);
+ 	
+ 	if (UserEnable != 0 &&  UserEnable != 1)
+@@ -218,7 +221,29 @@
+ 	if (!ndp)
+ 		return -ENODEV;	
+ 	
+-	np = ncsi_find_package(ndp, UserPackageID);
++	if(UserAuto) {
++#ifdef CONFIG_SPX_FEATURE_NCSI_ACTIVE_MULTIPLE
++
++		NCSI_FOR_EACH_PACKAGE(ndp, np) {
++			if (np->id < NCSI_MAX_PACKAGE) {
++				id = np->id;
++			} // if
++		}
++
++		np = ncsi_find_package(ndp, id);
++		if (!np) {
++			printk("NCSI: ERROR: Unable to find active_package. Use default package ID\n");
++			np = ncsi_find_package(ndp, UserPackageID);
++		} // if
++#else
++		np = ncsi_find_package(ndp, UserPackageID);
++#endif
++	} // if
++	else {
++		printk("NCSI: proc_enable use default package ID to find package\n");
++		np = ncsi_find_package(ndp, UserPackageID);
++	} // else
++
+ 	if (!np) {
+ 		printk("NCSI: ERROR: Unable to find package %d\n",UserPackageID);
+ 		return retval;
+@@ -461,7 +486,8 @@
+ 	struct ncsi_package *np;
+ 	struct ncsi_channel *nc;
+ 	int j = 0;
+-	
++	char UserInterfaceCut[8] = {0};
++
+ 	dev = dev_get_by_name(&init_net,UserInterface);
+ 	if (dev == NULL)
+ 	{
+@@ -481,6 +507,27 @@
+     		ChannelList[j++] = nc->id;
+     	}
+     }
++
++#ifdef CONFIG_SPX_FEATURE_NCSI_ACTIVE_MULTIPLE
++	while (j < sizeof(ChannelList)) {
++		if (ChannelList[j] == 0) {
++			j++;
++			if (ChannelList[j] == 0) {
++				break;
++			} // if
++			else {
++				ChannelList[j] = 0;
++				j++;
++			} // else
++		} // if
++		else {
++			ChannelList[j] = 0;
++			j++;
++			ChannelList[j] = 0;
++			j++;
++		} // else
++	} // for
++#endif
+     
+ 	return proc_dointvec(ctl,write,buffer,lenp,pos);
+ }
+@@ -488,11 +535,19 @@
+ int 
+ CreateProcSys(void)
+ {	
+-	sys_ncsi = AddSysctlTable("ncsi",&SysNcsiTable[0]);
+-	if (sys_ncsi == NULL)
+-	{
+-		printk("NCSI: ERROR: Unable to create /proc/sys/ractrends/ncsi \n");
+-	}
++	if (!isNcsiTableCreated) {
++		sys_ncsi = AddSysctlTable("ncsi",&SysNcsiTable[0]);
++		if (sys_ncsi == NULL)
++		{
++			printk("NCSI: ERROR: Unable to create /proc/sys/ractrends/ncsi \n");
++		}
++		else {
++			isNcsiTableCreated = true;
++		}
++	} // if
++	else {
++		printk("NCSI: already create /proc/sys/ractrends/ncsi \n");
++	} // else
+ 	return 0;
+ }
+ 
+@@ -505,3 +560,4 @@
+ 	return 0;
+ }
+ 
++

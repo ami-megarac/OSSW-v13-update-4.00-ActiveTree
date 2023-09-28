@@ -1,6 +1,7 @@
---- linux/drivers/block/nbd.c	2021-08-18 04:55:25.222714194 +0000
-+++ linux_new/drivers/block/nbd.c	2021-08-18 04:58:14.871475712 +0000
-@@ -145,8 +145,8 @@
+diff -Naur linux/drivers/block/nbd.c linux_new/drivers/block/nbd.c
+--- linux/drivers/block/nbd.c	2023-01-07 20:56:34.928769552 +0530
++++ linux_new/drivers/block/nbd.c	2023-01-07 21:18:58.420840239 +0530
+@@ -144,8 +144,8 @@
  
  #define NBD_DEF_BLKSIZE 1024
  
@@ -11,7 +12,16 @@
  static int part_shift;
  
  static int nbd_dev_dbg_init(struct nbd_device *nbd);
-@@ -1354,6 +1354,87 @@
+@@ -1344,7 +1344,7 @@
+ static void nbd_clear_sock_ioctl(struct nbd_device *nbd,
+ 				 struct block_device *bdev)
+ {
+-	nbd_clear_sock(nbd);
++	sock_shutdown(nbd);
+ 	__invalidate_device(bdev, true);
+ 	nbd_bdev_reset(bdev);
+ 	if (test_and_clear_bit(NBD_RT_HAS_CONFIG_REF,
+@@ -1369,6 +1369,87 @@
  		blk_queue_rq_timeout(nbd->disk->queue, 30 * HZ);
  }
  
@@ -99,7 +109,7 @@
  /* Must be called with config_lock held */
  static int __nbd_ioctl(struct block_device *bdev, struct nbd_device *nbd,
  		       unsigned int cmd, unsigned long arg)
-@@ -1393,6 +1474,10 @@
+@@ -1408,6 +1489,10 @@
  	case NBD_DO_IT:
  		return nbd_start_device_ioctl(nbd, bdev);
  	case NBD_CLEAR_QUE:
@@ -110,8 +120,9 @@
  		/*
  		 * This is for compatibility only.  The queue is always cleared
  		 * by NBD_DO_IT or NBD_CLEAR_SOCK.
---- linux/drivers/usb/gadget/function/storage_common.c	2021-08-18 04:55:26.710719599 +0000
-+++ linux_new/drivers/usb/gadget/function/storage_common.c	2021-08-18 04:59:20.687780900 +0000
+diff -Naur linux/drivers/usb/gadget/function/storage_common.c linux_new/drivers/usb/gadget/function/storage_common.c
+--- linux/drivers/usb/gadget/function/storage_common.c	2023-01-07 21:09:19.867693533 +0530
++++ linux_new/drivers/usb/gadget/function/storage_common.c	2023-01-07 21:10:11.128816227 +0530
 @@ -438,7 +438,7 @@
  		((char *) buf)[count-1] = 0;		/* Ugh! */
  

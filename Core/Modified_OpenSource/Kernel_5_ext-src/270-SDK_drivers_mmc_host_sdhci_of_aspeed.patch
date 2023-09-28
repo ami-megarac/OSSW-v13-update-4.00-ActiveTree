@@ -1,0 +1,90 @@
+diff -Nuar a/drivers/mmc/host/sdhci-of-aspeed.c b/drivers/mmc/host/sdhci-of-aspeed.c
+--- a/drivers/mmc/host/sdhci-of-aspeed.c	2023-09-04 13:55:25.688798428 +0530
++++ b/drivers/mmc/host/sdhci-of-aspeed.c	2023-09-04 13:56:25.869474941 +0530
+@@ -190,7 +190,6 @@
+                 {
+                         dev_err(&host->mmc->class_dev, "todo fail check ~~\n");
+                 }
+-                   // printk("todo fail check ~~ \n");
+ 
+             sdhci_writeb(host, pwr, SDHCI_POWER_CONTROL);
+     }
+@@ -224,10 +223,12 @@
+ };
+ 
+ static struct sdhci_pltfm_data aspeed_sdhci_pdata = {
+-        .ops = &aspeed_sdhci_ops,
+ #ifndef CONFIG_MACH_ASPEED_G6
+         .quirks = SDHCI_QUIRK_CAP_CLOCK_BASE_BROKEN,
+         .quirks2 = SDHCI_QUIRK2_CLOCK_DIV_ZERO_BROKEN | SDHCI_QUIRK2_PRESET_VALUE_BROKEN,
++#else
++        .ops = &aspeed_sdhci_ops,
++        .quirks2 = SDHCI_QUIRK2_PRESET_VALUE_BROKEN,
+ #endif
+ };
+ 
+@@ -256,6 +257,7 @@
+         struct aspeed_sdhci *dev;
+         struct sdhci_host *host;
+         struct resource *res;
++        uint32_t reg_val;
+         int slot;
+         int ret;
+ 
+@@ -280,6 +282,23 @@
+ 
+         sdhci_get_of_property(pdev);
+ 
++        if (of_property_read_bool(pdev->dev.parent->of_node, "mmc-hs200-1_8v") ||
++                of_property_read_bool(pdev->dev.parent->of_node, "sd-uhs-sdr104")) {
++                reg_val = readl(host->ioaddr + 0x40);
++                /* support 1.8V */
++                reg_val |= BIT(26);
++                /* write to sdhci140 or sdhci240 mirror register */
++                writel(reg_val, dev->parent->regs + (0x10 * (slot + 1)));
++        }
++
++        if (of_property_read_bool(pdev->dev.parent->of_node, "sd-uhs-sdr104")) {
++                reg_val = readl(host->ioaddr + 0x44);
++                /* SDR104 */
++                reg_val |= BIT(1);
++                /* write to sdhci144 or sdhci244 mirror register */
++                writel(reg_val, dev->parent->regs + (0x04 + (slot + 1) * 0x10));
++        }
++
+         pltfm_host->clk = devm_clk_get(&pdev->dev, NULL);
+         if (IS_ERR(pltfm_host->clk))
+                 return PTR_ERR(pltfm_host->clk);
+@@ -299,7 +318,6 @@
+                 if (gpio_is_valid(dev->pwr_pin)) {
+                         if (devm_gpio_request(&pdev->dev, dev->pwr_pin,
+                                                                   "mmc_pwr")) {
+-                        //      printk("devm_gpio_request pwr fail \n");
+                                 dev_err(&pdev->dev, "devm_gpio_request pwr fail\n");
+                         }
+                         gpio_direction_output(dev->pwr_pin, 1);
+@@ -312,7 +330,6 @@
+                 if (gpio_is_valid(dev->pwr_sw_pin)) {
+                         if (devm_gpio_request(&pdev->dev, dev->pwr_sw_pin,
+                                                           "mmc_pwr_sw")) {
+-                //              printk("devm_gpio_request pwr sw fail \n");
+                                 dev_err(&pdev->dev, "devm_gpio_request pwr sw fail\n");
+                         }
+                         gpio_direction_output(dev->pwr_sw_pin, 1);
+@@ -458,16 +475,6 @@
+ 
+         return 0;
+ }
+-/*
+-static const struct of_device_id aspeed_sdc_of_match[] = {
+-        { .compatible = "aspeed,ast2400-sd-controller", },
+-        { .compatible = "aspeed,ast2500-sd-controller", },
+-        { .compatible = "aspeed,ast2600-sd-controller", },
+-        { }
+-};
+-
+-MODULE_DEVICE_TABLE(of, aspeed_sdc_of_match);
+-*/
+ 
+ static struct platform_driver aspeed_sdc_driver = {
+         .driver         = {

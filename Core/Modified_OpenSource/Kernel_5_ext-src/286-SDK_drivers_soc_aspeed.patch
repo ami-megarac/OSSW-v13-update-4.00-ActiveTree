@@ -1,0 +1,338 @@
+diff -Nuar a/drivers/soc/aspeed/aspeed-mctp.c b/drivers/soc/aspeed/aspeed-mctp.c
+--- a/drivers/soc/aspeed/aspeed-mctp.c	2023-09-01 10:59:45.165322027 +0530
++++ b/drivers/soc/aspeed/aspeed-mctp.c	2023-09-01 11:00:05.553573332 +0530
+@@ -114,7 +114,7 @@
+ #define TX_DATA_ADDR_2500(x) \
+ 	FIELD_PREP(TX_DATA_ADDR_MASK_2500, DATA_ADDR_2500(x))
+ #define TX_PACKET_SIZE_2500(x) \
+-	FIELD_PREP(GENMASK(11, 2), DATA_ADDR_2500(x))
++	FIELD_PREP(GENMASK(11, 2), x)
+ #define TX_PACKET_DEST_EID	GENMASK(7, 0)
+ #define TX_PACKET_TARGET_ID	GENMASK(31, 16)
+ #define TX_PACKET_ROUTING_TYPE	BIT(14)
+@@ -155,6 +155,8 @@
+ #define TX_RING_COUNT		64
+ 
+ /* PCIe Host Controller registers */
++#define ASPEED_PCIE_LINK	0x0c0
++#define PCIE_LINK_STS		BIT(5)
+ #define ASPEED_PCIE_MISC_STS_1	0x0c4
+ 
+ /* PCI address definitions */
+@@ -364,6 +366,9 @@
+ 	u32 reg;
+ 	u16 bdf;
+ 
++	regmap_read(priv->pcie.map, ASPEED_PCIE_LINK, &reg);
++	if (!(reg & PCIE_LINK_STS))
++		return 0;
+ 	regmap_read(priv->pcie.map, ASPEED_PCIE_MISC_STS_1, &reg);
+ 
+ 	reg = reg & (PCI_BUS_NUM_MASK | PCI_DEV_NUM_MASK);
+@@ -750,7 +755,7 @@
+ 		 */
+ 		rx_buf = (struct mctp_pcie_packet_data *)rx->data.vaddr;
+ 		hdr = (u32 *)&rx_buf[rx->wr_ptr];
+-		if ((priv->rx_warmup || priv->rx_runaway_wa.first_loop) && !*hdr) {
++		if (!*hdr && priv->rx_warmup) {
+ 			u32 tmp_wr_ptr = rx->wr_ptr;
+ 
+ 			/*
+@@ -777,6 +782,8 @@
+ 							     residual_cmds);
+ 				priv->rx_warmup = false;
+ 			}
++		} else {
++			priv->rx_warmup = false;
+ 		}
+ 
+ 		if (priv->rx_runaway_wa.packet_counter > priv->rx_packet_count &&
+@@ -805,6 +812,14 @@
+ 		}
+ 
+ 		while (*hdr != 0) {
++			if (FIELD_GET(MCTP_HDR_DW_LE_PACKET_SIZE, hdr[0]) * 4 >
++			    ASPEED_MCTP_MTU)
++				dev_warn(priv->dev,
++					 "Rx length %ld > MTU size %d\n",
++					 FIELD_GET(MCTP_HDR_DW_LE_PACKET_SIZE,
++						   hdr[0]) *
++						 4,
++					 ASPEED_MCTP_MTU);
+ 			rx_packet = aspeed_mctp_packet_alloc(GFP_ATOMIC);
+ 			if (rx_packet) {
+ 				memcpy(&rx_packet->data, hdr, sizeof(rx_packet->data));
+@@ -1115,13 +1130,12 @@
+ 			priv->rx.stopped = true;
+ 		/* Polling the RX_CMD_RECEIVE_INT to ensure rx_tasklet can find the data */
+ 		regmap_read(priv->map, ASPEED_MCTP_INT_STS, &mctp_int_sts);
+-		if (mctp_int_sts & RX_CMD_RECEIVE_INT) {
++		if (mctp_int_sts & RX_CMD_RECEIVE_INT)
+ 			regmap_write(priv->map, ASPEED_MCTP_INT_STS,
+ 				     mctp_int_sts);
+-			tasklet_hi_schedule(&priv->rx.tasklet);
+-		}
+ 	}
+ 
++	tasklet_hi_schedule(&priv->rx.tasklet);
+ 	rx_packet = ptr_ring_consume_bh(&client->rx_queue);
+ 	if (!rx_packet)
+ 		return -EAGAIN;
+@@ -1206,7 +1220,7 @@
+ 		if (pci_vendor_id != 0 || vdm_type != 0 || vdm_mask != 0)
+ 			return -EINVAL;
+ 	} else if (mctp_type == MCTP_HDR_TYPE_VDM_PCI) {
+-		/* For Vendor Defined PCI type the the vendor ID must be nonzero */
++		/* For Vendor Defined PCI type the vendor ID must be nonzero */
+ 		if (pci_vendor_id == 0 || pci_vendor_id == 0xffff)
+ 			return -EINVAL;
+ 	} else {
+@@ -1446,7 +1460,7 @@
+ }
+ 
+ static int
+-eid_info_cmp(void *priv,  struct list_head *a,  struct list_head *b)
++eid_info_cmp(void *priv, struct list_head *a, struct list_head *b)
+ {
+ 	struct aspeed_mctp_endpoint *endpoint_a;
+ 	struct aspeed_mctp_endpoint *endpoint_b;
+@@ -1544,7 +1558,7 @@
+ 		list_add_tail(&endpoint->link, &list);
+ 	}
+ 
+-	list_sort(NULL, &list, eid_info_cmp);
++	list_sort(NULL, &list, &eid_info_cmp);
+ 	if (!aspeed_mctp_eid_info_list_valid(&list)) {
+ 		ret = -EINVAL;
+ 		goto out;
+@@ -1632,13 +1646,12 @@
+ 			rx->stopped = true;
+ 		/* Polling the RX_CMD_RECEIVE_INT to ensure rx_tasklet can find the data */
+ 		regmap_read(priv->map, ASPEED_MCTP_INT_STS, &mctp_int_sts);
+-		if (mctp_int_sts & RX_CMD_RECEIVE_INT) {
++		if (mctp_int_sts & RX_CMD_RECEIVE_INT)
+ 			regmap_write(priv->map, ASPEED_MCTP_INT_STS,
+ 				     mctp_int_sts);
+-			tasklet_hi_schedule(&priv->rx.tasklet);
+-		}
+ 	}
+ 
++	tasklet_hi_schedule(&priv->rx.tasklet);
+ 	poll_wait(file, &client->wait_queue, pt);
+ 
+ 	if (!ptr_ring_full_bh(&client->tx_queue))
+diff -Nuar a/drivers/soc/aspeed/aspeed-otp.c b/drivers/soc/aspeed/aspeed-otp.c
+--- a/drivers/soc/aspeed/aspeed-otp.c	2023-09-01 10:59:45.165322027 +0530
++++ b/drivers/soc/aspeed/aspeed-otp.c	2023-09-01 11:00:05.553573332 +0530
+@@ -498,7 +498,7 @@
+ 			return -EFAULT;
+ 		break;
+ 	case ASPEED_SEC_KEY_NUM:
+-		reg_read[0] = aspeed_otp_read(ctx, SEC_KEY_NUM) & 3;
++		reg_read[0] = aspeed_otp_read(ctx, SEC_KEY_NUM) & 7;
+ 		if (copy_to_user(argp, reg_read, sizeof(u32)))
+ 			return -EFAULT;
+ 		break;
+diff -Nuar a/drivers/soc/aspeed/aspeed-udma.c b/drivers/soc/aspeed/aspeed-udma.c
+--- a/drivers/soc/aspeed/aspeed-udma.c	2023-09-01 10:59:45.189322323 +0530
++++ b/drivers/soc/aspeed/aspeed-udma.c	2023-09-01 11:00:05.553573332 +0530
+@@ -12,6 +12,7 @@
+ #include <linux/dma-mapping.h>
+ #include <linux/spinlock.h>
+ #include <linux/soc/aspeed/aspeed-udma.h>
++#include <linux/delay.h>
+ 
+ #define DEVICE_NAME "aspeed-udma"
+ 
+@@ -313,8 +314,12 @@
+ 	case ASPEED_UDMA_OP_RESET:
+ 		reg_en &= ~(0x1 << ch_no);
+ 		writel(reg_en, udma->regs + reg_en_off);
++
+ 		reg_rst |= (0x1 << ch_no);
+ 		writel(reg_rst, udma->regs + reg_rst_off);
++
++		udelay(100);
++
+ 		reg_rst &= ~(0x1 << ch_no);
+ 		writel(reg_rst, udma->regs + reg_rst_off);
+ 		break;
+@@ -440,6 +445,7 @@
+ static const struct of_device_id aspeed_udma_match[] = {
+ 	{ .compatible = "aspeed,ast2500-udma" },
+ 	{ .compatible = "aspeed,ast2600-udma" },
++	{ },
+ };
+ 
+ static struct platform_driver aspeed_udma_driver = {
+diff -Nuar a/drivers/soc/aspeed/Kconfig b/drivers/soc/aspeed/Kconfig
+--- a/drivers/soc/aspeed/Kconfig	2023-09-01 10:59:45.205322520 +0530
++++ b/drivers/soc/aspeed/Kconfig	2023-09-01 11:00:05.561573430 +0530
+@@ -13,21 +13,14 @@
+ 	  Say yes to expose VGA and LPC scratch registers, and other
+ 	  miscellaneous control interfaces specific to the ASPEED BMC SoCs
+ 
+-config ASPEED_ESPI
+-	tristate "Aspeed eSPI Engine Driver"
+-	depends on SOC_ASPEED && REGMAP && MFD_SYSCON
+-	help
+-	  Enable support for the Aspeed eSPI engine. The eSPI engine
+-	  plays as a slave device in BMC to communicate with the host
+-	  side master over the eSPI interface. The four eSPI channels,
+-	  namely peripheral, virtual wire, out-of-band, and flash are
+-	  supported.
++config ASPEED_BMC_DEV
++	tristate "ASPEED BMC Device"
+ 
+-config ASPEED_ESPI_MMBI
+-	tristate "Aspeed eSPI MMBI Driver"
+-	depends on ASPEED_ESPI
+-	help
+-	  Control Aspeed eSPI MMBI driver
++config ASPEED_HOST_BMC_DEV
++	tristate "ASPEED Host BMC Device"
++
++config ASPEED_HID
++	tristate "ASPEED HID"
+ 
+ config ASPEED_LPC_CTRL
+ 	depends on SOC_ASPEED && REGMAP && MFD_SYSCON
+@@ -68,9 +61,38 @@
+ 	  ioctl()s, the driver also provides an interface for userspace mappings to
+ 	  a pre-defined region.
+ 
++config ASPEED_XDMA
++	tristate "Aspeed XDMA Engine Driver"
++	depends on SOC_ASPEED && REGMAP && MFD_SYSCON && HAS_DMA
++	help
++	  Enable support for the Aspeed XDMA Engine found on the Aspeed AST2XXX
++	  SOCs. The XDMA engine can perform automatic PCI DMA operations
++	  between the AST2XXX (acting as a BMC) and a host processor.
++
++config ASPEED_HOST_XDMA
++	tristate "ASPEED Host xDMA Device"
++
++config ASPEED_VGA_SHAREDMEM
++	tristate "Aspeed VGA Shared memory"
++	depends on SOC_ASPEED
++	help
++	  To access VGA shared memory on Aspeed BMC, enable this option.
++	  This driver used by ManagedDataRegionlV2 specification. In the
++	  specification, BIOS will transfer whole SMBIOS table to VGA memory,
++	  and BMC can get the table from VGA memory through this driver.
++
++config ASPEED_MCTP
++	tristate "Aspeed MCTP Engine Driver"
++	depends on SOC_ASPEED && REGMAP && MFD_SYSCON
++	help
++	  Enable support for the Aspeed MCTP Engine found on the Aspeed AST2XXX
++	  SOCs. The MCTP Engine receives Msg which carries MCTP packet through 
++	  PCIe from Host or sends it to Host.
++
+ config ASPEED_OTP
+ 	tristate "Aspeed OTP Driver"
+ 	depends on MACH_ASPEED_G6
++
+ config ASPEED_UDMA
+ 	tristate "Aspeed UDMA Engine Driver"
+ 	depends on SOC_ASPEED && REGMAP && MFD_SYSCON && HAS_DMA
+@@ -78,18 +100,36 @@
+ 	  Enable support for the Aspeed UDMA Engine found on the Aspeed AST2XXX
+ 	  SOCs. The UDMA engine can perform UART DMA operations between the memory
+ 	  buffer and the UART/VUART devices.
+-	  
+-config ASPEED_JTAG
+-	tristate "ASPEED JTAG Controller"
++
++config ASPEED_ESPI
++	bool "ASPEED eSPI slave driver"
++	select AST2500_ESPI if MACH_ASPEED_G5
++	select AST2600_ESPI if MACH_ASPEED_G6
+ 	default n
+ 	help
+-	  Driver for JTAG Controller
++	  Enable support for the Aspeed eSPI engine. The eSPI engine
++	  plays as a slave device in BMC to communicate with the host
++	  side master over the eSPI interface. The four eSPI channels,
++	  namely peripheral, virtual wire, out-of-band, and flash are
++	  supported.
+ 
+-config ASPEED_MCTP
+-        tristate "ASPEED MCTP Driver"
++config AST2500_ESPI
++	bool
++	depends on ASPEED_ESPI
++	help
++	  Enable driver support for Aspeed AST2500 eSPI engine.
++
++config AST2600_ESPI
++	bool
++	depends on ASPEED_ESPI
++	help
++	  Enable driver support for Aspeed AST2600 eSPI engine.
++
++config ASPEED_SSP
++	tristate "ASPEED SSP loader"
+         default n
+         help
+-          Driver for MCTP
++          Driver for loading secondary-service-processor binary
+ 
+ config ASPEED_UART_ROUTING
+ 	tristate "Aspeed UART routing control"
+@@ -97,4 +137,15 @@
+ 	  Control Aspeed UART routing via sysfs. This enables UART
+ 	  and I/O components to be dynamically connected at runtime.
+ 
++config ASPEED_VGA_SHAREDMEM
++	tristate "Aspeed VGA Shared memory"
++	depends on SOC_ASPEED
++	help
++	  To access VGA shared memory on Aspeed BMC, enable this option.
++	  This driver used by ManagedDataRegionlV2 specification. In the
++	  specification, BIOS will transfer whole SMBIOS table to VGA memory,
++	  and BMC can get the table from VGA memory through this driver.
++
++#source "drivers/soc/aspeed/rvas/Kconfig"
++
+ endmenu
+diff -Nuar a/drivers/soc/aspeed/Makefile b/drivers/soc/aspeed/Makefile
+--- a/drivers/soc/aspeed/Makefile	2023-09-01 10:59:45.213322619 +0530
++++ b/drivers/soc/aspeed/Makefile	2023-09-01 11:00:05.561573430 +0530
+@@ -1,21 +1,24 @@
+ # SPDX-License-Identifier: GPL-2.0-only
+ obj-$(CONFIG_ASPEED_BMC_MISC)	+= aspeed-bmc-misc.o
+-obj-$(CONFIG_ASPEED_ESPI)	+= aspeed-espi-ctrl.o 
+-obj-$(CONFIG_ASPEED_ESPI_MMBI)	+= aspeed-espi-mmbi.o
+-obj-$(CONFIG_ASPEED_JTAG)	+= aspeed-jtag.o
+-obj-$(CONFIG_ASPEED_MCTP)       += aspeed-mctp.o
++obj-$(CONFIG_ASPEED_BMC_DEV)	+= aspeed-bmc-dev.o
++obj-$(CONFIG_ASPEED_HOST_BMC_DEV)	+= aspeed-host-bmc-dev.o
++obj-$(CONFIG_ASPEED_HID)	+= aspeed-hid.o
+ obj-$(CONFIG_ASPEED_LPC_CTRL)	+= aspeed-lpc-ctrl.o
+ obj-$(CONFIG_ASPEED_LPC_SNOOP)	+= aspeed-lpc-snoop.o
+ obj-$(CONFIG_ASPEED_LPC_PCC)	+= aspeed-lpc-pcc.o
+ obj-$(CONFIG_ASPEED_LPC_MBOX)	+= aspeed-lpc-mbox.o
+-obj-$(CONFIG_ASPEED_UDMA)	+= aspeed-udma.o
+ obj-$(CONFIG_ASPEED_P2A_CTRL)	+= aspeed-p2a-ctrl.o
++obj-$(CONFIG_ASPEED_XDMA)	+= aspeed-xdma.o
++obj-$(CONFIG_ASPEED_HOST_XDMA)	+= aspeed-host-xdma.o
++obj-$(CONFIG_ASPEED_VGA_SHAREDMEM)	+= aspeed-vga-sharedmem.o
++obj-$(CONFIG_ASPEED_MCTP)	+= aspeed-mctp.o
++obj-$(CONFIG_ASPEED_UDMA)	+= aspeed-udma.o
++obj-$(CONFIG_ASPEED_SSP)        += aspeed-ssp.o
+ obj-$(CONFIG_ASPEED_UART_ROUTING)	+= aspeed-uart-routing.o
++obj-$(CONFIG_AST2500_ESPI)		+= ast2500-espi.o
++obj-$(CONFIG_AST2600_ESPI)		+= ast2600-espi.o
++obj-$(CONFIG_ASPEED_RVAS)		+= rvas/
++obj-$(CONFIG_ASPEED_VGA_SHAREDMEM)	+= aspeed-vga-sharedmem.o
+ obj-$(CONFIG_ASPEED_OTP)	+= aspeed-otp.o
+-obj-$(CONFIG_SOC_ASPEED)       += aspeed-usb-phy.o
+-obj-$(CONFIG_SOC_ASPEED)       += aspeed-usb-ahp.o
+-obj-$(CONFIG_ASPEED_ESPI)		+= aspeed-espi-ctrl.o \
+-					   aspeed-espi-perif.o \
+-					   aspeed-espi-vw.o \
+-					   aspeed-espi-oob.o \
+-					   aspeed-espi-flash.o
++obj-$(CONFIG_SOC_ASPEED)	+= aspeed-usb-phy.o
++obj-$(CONFIG_SOC_ASPEED)	+= aspeed-usb-ahp.o

@@ -287,7 +287,7 @@ diff -Naur linux_old/drivers/spi/spi-aspeed.c linux/drivers/spi/spi-aspeed.c
 +				  11, 3, 10, 2, 9,  1, 8,  0 };
 +
 +	/* FMC/SPIR10[27:24] */
-+	for (j = 0; j < 0xf; i++) {
++	for (j = 0; j < 0xf; j++) {
 +		/* FMC/SPIR10[11:8] */
 +		for (i = 0; i < ARRAY_SIZE(hclk_masks); i++) {
 +			if (i == 0 && j == 0)

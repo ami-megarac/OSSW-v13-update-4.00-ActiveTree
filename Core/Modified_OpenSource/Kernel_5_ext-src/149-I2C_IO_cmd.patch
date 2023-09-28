@@ -91,6 +91,19 @@ diff -ruNa linux/drivers/i2c/busses/i2c-new-aspeed.c linux_n/drivers/i2c/busses/
  		dev_dbg(i2c_bus->dev, "timeout isr[%x], sts[%x]\n", isr,
  					readl(i2c_bus->reg_base + AST_I2CC_STS_AND_BUFF));
  		if (isr || (readl(i2c_bus->reg_base + AST_I2CC_STS_AND_BUFF) & AST_I2CC_TX_DIR_MASK)) {
+@@ -1384,7 +1431,11 @@
+ 		i2c_bus->multi_master = true;
+ 	else
+ 		fun_ctrl |= AST_I2CC_MULTI_MASTER_DIS;
+-
++	
++	if(((int) i2c_bus->reg_base & 0x0000FF0) == 0x00000500)//SDA10
++	{
++		fun_ctrl |= AST_I2CC_SDA_DRIVE_1T_EN;
++	}
+ 	/* Enable Master Mode */
+ 	writel(fun_ctrl, i2c_bus->reg_base + AST_I2CC_FUN_CTRL);
+ 	/* disable slave address */
 @@ -1626,6 +1677,7 @@
  	i2c_bus->adap.dev.parent = i2c_bus->dev;
  	i2c_bus->adap.dev.of_node = pdev->dev.of_node;

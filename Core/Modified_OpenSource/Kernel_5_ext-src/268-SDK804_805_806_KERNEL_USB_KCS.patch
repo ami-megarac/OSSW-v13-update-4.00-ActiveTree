@@ -1,0 +1,516 @@
+--- linux/drivers/pinctrl/aspeed/pinctrl-aspeed-g6.c	2023-07-14 14:42:56.143177501 +0800
++++ linux-new/drivers/pinctrl/aspeed/pinctrl-aspeed-g6.c	2023-07-18 10:33:16.940730040 +0800
+@@ -311,8 +311,7 @@
+ SIG_EXPR_LIST_DECL_SESG(D26, NDTR3, NDTR3, SIG_DESC_SET(SCU414, 0),
+ 			SIG_DESC_CLEAR(SCU470, 16));
+ SIG_EXPR_LIST_DECL_SESG(D26, RGMII4TXD2, RGMII4, SIG_DESC_SET(SCU4B4, 0),
+-			SIG_DESC_CLEAR(SCU470, 16), SIG_DESC_CLEAR(SCU474, 0),
+-			SIG_DESC_SET(SCU510, 1));
++			SIG_DESC_CLEAR(SCU470, 16), SIG_DESC_SET(SCU510, 1));
+ PIN_DECL_2(D26, GPIOE0, NDTR3, RGMII4TXD2);
+ FUNC_GROUP_DECL(NDTR3, D26);
+ 
+@@ -320,8 +319,7 @@
+ SIG_EXPR_LIST_DECL_SESG(D24, NRTS3, NRTS3, SIG_DESC_SET(SCU414, 1),
+ 			SIG_DESC_CLEAR(SCU470, 17));
+ SIG_EXPR_LIST_DECL_SESG(D24, RGMII4TXD3, RGMII4, SIG_DESC_SET(SCU4B4, 1),
+-			SIG_DESC_CLEAR(SCU470, 17), SIG_DESC_CLEAR(SCU474, 1),
+-			SIG_DESC_SET(SCU510, 1));
++			SIG_DESC_CLEAR(SCU470, 17), SIG_DESC_SET(SCU510, 1));
+ PIN_DECL_2(D24, GPIOE1, NRTS3, RGMII4TXD3);
+ FUNC_GROUP_DECL(NRTS3, D24);
+ 
+@@ -329,11 +327,9 @@
+ SIG_EXPR_LIST_DECL_SESG(C25, NCTS4, NCTS4, SIG_DESC_SET(SCU414, 2),
+ 			SIG_DESC_CLEAR(SCU470, 18));
+ SIG_EXPR_LIST_DECL_SESG(C25, RGMII4RXCK, RGMII4, SIG_DESC_SET(SCU4B4, 2),
+-			SIG_DESC_CLEAR(SCU470, 18), SIG_DESC_CLEAR(SCU474, 2),
+-			SIG_DESC_SET(SCU510, 1));
++			SIG_DESC_CLEAR(SCU470, 18), SIG_DESC_SET(SCU510, 1));
+ SIG_EXPR_LIST_DECL_SESG(C25, RMII4RCLKI, RMII4, SIG_DESC_SET(SCU4B4, 2),
+-			SIG_DESC_CLEAR(SCU470, 18), SIG_DESC_CLEAR(SCU474, 2),
+-			SIG_DESC_CLEAR(SCU510, 1));
++			SIG_DESC_CLEAR(SCU470, 18), SIG_DESC_CLEAR(SCU510, 1));
+ PIN_DECL_3(C25, GPIOE2, NCTS4, RGMII4RXCK, RMII4RCLKI);
+ FUNC_GROUP_DECL(NCTS4, C25);
+ 
+@@ -341,8 +337,7 @@
+ SIG_EXPR_LIST_DECL_SESG(C26, NDCD4, NDCD4, SIG_DESC_SET(SCU414, 3),
+ 			SIG_DESC_CLEAR(SCU470, 19));
+ SIG_EXPR_LIST_DECL_SESG(C26, RGMII4RXCTL, RGMII4, SIG_DESC_SET(SCU4B4, 3),
+-			SIG_DESC_CLEAR(SCU470, 19), SIG_DESC_CLEAR(SCU474, 3),
+-			SIG_DESC_SET(SCU510, 1));
++			SIG_DESC_CLEAR(SCU470, 19), SIG_DESC_SET(SCU510, 1));
+ PIN_DECL_2(C26, GPIOE3, NDCD4, RGMII4RXCTL);
+ FUNC_GROUP_DECL(NDCD4, C26);
+ 
+@@ -350,11 +345,9 @@
+ SIG_EXPR_LIST_DECL_SESG(C24, NDSR4, NDSR4, SIG_DESC_SET(SCU414, 4),
+ 			SIG_DESC_CLEAR(SCU470, 20));
+ SIG_EXPR_LIST_DECL_SESG(C24, RGMII4RXD0, RGMII4, SIG_DESC_SET(SCU4B4, 4),
+-			SIG_DESC_CLEAR(SCU470, 20), SIG_DESC_CLEAR(SCU474, 4),
+-			SIG_DESC_SET(SCU510, 1));
++			SIG_DESC_CLEAR(SCU470, 20), SIG_DESC_SET(SCU510, 1));
+ SIG_EXPR_LIST_DECL_SESG(C24, RMII4RXD0, RMII4, SIG_DESC_SET(SCU4B4, 4),
+-			SIG_DESC_CLEAR(SCU470, 20), SIG_DESC_CLEAR(SCU474, 4),
+-			SIG_DESC_CLEAR(SCU510, 1));
++			SIG_DESC_CLEAR(SCU470, 20), SIG_DESC_CLEAR(SCU510, 1));
+ PIN_DECL_3(C24, GPIOE4, NDSR4, RGMII4RXD0, RMII4RXD0);
+ FUNC_GROUP_DECL(NDSR4, C24);
+ 
+@@ -362,11 +355,9 @@
+ SIG_EXPR_LIST_DECL_SESG(B26, NRI4, NRI4, SIG_DESC_SET(SCU414, 5),
+ 			SIG_DESC_CLEAR(SCU470, 21));
+ SIG_EXPR_LIST_DECL_SESG(B26, RGMII4RXD1, RGMII4, SIG_DESC_SET(SCU4B4, 5),
+-			SIG_DESC_CLEAR(SCU470, 21), SIG_DESC_CLEAR(SCU474, 5),
+-			SIG_DESC_SET(SCU510, 1));
++			SIG_DESC_CLEAR(SCU470, 21), SIG_DESC_SET(SCU510, 1));
+ SIG_EXPR_LIST_DECL_SESG(B26, RMII4RXD1, RMII4, SIG_DESC_SET(SCU4B4, 5),
+-			SIG_DESC_CLEAR(SCU470, 21), SIG_DESC_CLEAR(SCU474, 5),
+-			SIG_DESC_CLEAR(SCU510, 1));
++			SIG_DESC_CLEAR(SCU470, 21), SIG_DESC_CLEAR(SCU510, 1));
+ PIN_DECL_3(B26, GPIOE5, NRI4, RGMII4RXD1, RMII4RXD1);
+ FUNC_GROUP_DECL(NRI4, B26);
+ 
+@@ -374,11 +365,9 @@
+ SIG_EXPR_LIST_DECL_SESG(B25, NDTR4, NDTR4, SIG_DESC_SET(SCU414, 6),
+ 			SIG_DESC_CLEAR(SCU470, 22));
+ SIG_EXPR_LIST_DECL_SESG(B25, RGMII4RXD2, RGMII4, SIG_DESC_SET(SCU4B4, 6),
+-			SIG_DESC_CLEAR(SCU470, 22), SIG_DESC_CLEAR(SCU474, 6),
+-			SIG_DESC_SET(SCU510, 1));
++			SIG_DESC_CLEAR(SCU470, 22), SIG_DESC_SET(SCU510, 1));
+ SIG_EXPR_LIST_DECL_SESG(B25, RMII4CRSDV, RMII4, SIG_DESC_SET(SCU4B4, 6),
+-			SIG_DESC_CLEAR(SCU470, 22), SIG_DESC_CLEAR(SCU474, 6),
+-			SIG_DESC_CLEAR(SCU510, 1));
++			SIG_DESC_CLEAR(SCU470, 22), SIG_DESC_CLEAR(SCU510, 1));
+ PIN_DECL_3(B25, GPIOE6, NDTR4, RGMII4RXD2, RMII4CRSDV);
+ FUNC_GROUP_DECL(NDTR4, B25);
+ 
+@@ -386,11 +375,9 @@
+ SIG_EXPR_LIST_DECL_SESG(B24, NRTS4, NRTS4, SIG_DESC_SET(SCU414, 7),
+ 			SIG_DESC_CLEAR(SCU470, 23));
+ SIG_EXPR_LIST_DECL_SESG(B24, RGMII4RXD3, RGMII4, SIG_DESC_SET(SCU4B4, 7),
+-			SIG_DESC_CLEAR(SCU470, 23), SIG_DESC_CLEAR(SCU474, 7),
+-			SIG_DESC_SET(SCU510, 1));
++			SIG_DESC_CLEAR(SCU470, 23), SIG_DESC_SET(SCU510, 1));
+ SIG_EXPR_LIST_DECL_SESG(B24, RMII4RXER, RMII4, SIG_DESC_SET(SCU4B4, 7),
+-			SIG_DESC_CLEAR(SCU470, 23), SIG_DESC_CLEAR(SCU474, 7),
+-			SIG_DESC_CLEAR(SCU510, 1));
++			SIG_DESC_CLEAR(SCU470, 23), SIG_DESC_CLEAR(SCU510, 1));
+ PIN_DECL_3(B24, GPIOE7, NRTS4, RGMII4RXD3, RMII4RXER);
+ FUNC_GROUP_DECL(NRTS4, B24);
+ 
+@@ -620,13 +607,15 @@
+ FUNC_GROUP_DECL(SIOSCI, A15);
+ 
+ #define B20 72
+-SIG_EXPR_LIST_DECL_SEMG(B20, I3C3SCL, HVI3C3, I3C3, SIG_DESC_SET(SCU418, 8));
++SIG_EXPR_LIST_DECL_SEMG(B20, I3C3SCL, HVI3C3, I3C3, SIG_DESC_SET(SCU418, 8),
++			SIG_DESC_CLEAR(SCU438, 20));
+ SIG_EXPR_LIST_DECL_SESG(B20, SCL1, I2C1, SIG_DESC_SET(SCU4B8, 8));
+ SIG_EXPR_LIST_DECL_SESG(B20, SSCL1, SI2C1, SIG_DESC_SET(SCU698, 8));
+ PIN_DECL_3(B20, GPIOJ0, I3C3SCL, SCL1, SSCL1);
+ 
+ #define A20 73
+-SIG_EXPR_LIST_DECL_SEMG(A20, I3C3SDA, HVI3C3, I3C3, SIG_DESC_SET(SCU418, 9));
++SIG_EXPR_LIST_DECL_SEMG(A20, I3C3SDA, HVI3C3, I3C3, SIG_DESC_SET(SCU418, 9),
++			SIG_DESC_CLEAR(SCU438, 21));
+ SIG_EXPR_LIST_DECL_SESG(A20, SDA1, I2C1, SIG_DESC_SET(SCU4B8, 9));
+ SIG_EXPR_LIST_DECL_SESG(A20, SSDA1, SI2C1, SIG_DESC_SET(SCU698, 9));
+ PIN_DECL_3(A20, GPIOJ1, I3C3SDA, SDA1, SSDA1);
+@@ -636,13 +625,15 @@
+ FUNC_GROUP_DECL(SI2C1, B20, A20);
+ 
+ #define E19 74
+-SIG_EXPR_LIST_DECL_SEMG(E19, I3C4SCL, HVI3C4, I3C4, SIG_DESC_SET(SCU418, 10));
++SIG_EXPR_LIST_DECL_SEMG(E19, I3C4SCL, HVI3C4, I3C4, SIG_DESC_SET(SCU418, 10),
++			SIG_DESC_CLEAR(SCU438, 22));
+ SIG_EXPR_LIST_DECL_SESG(E19, SCL2, I2C2, SIG_DESC_SET(SCU4B8, 10));
+ SIG_EXPR_LIST_DECL_SESG(E19, SSCL2, SI2C2, SIG_DESC_SET(SCU698, 10));
+ PIN_DECL_3(E19, GPIOJ2, I3C4SCL, SCL2, SSCL2);
+ 
+ #define D20 75
+-SIG_EXPR_LIST_DECL_SEMG(D20, I3C4SDA, HVI3C4, I3C4, SIG_DESC_SET(SCU418, 11));
++SIG_EXPR_LIST_DECL_SEMG(D20, I3C4SDA, HVI3C4, I3C4, SIG_DESC_SET(SCU418, 11),
++			SIG_DESC_CLEAR(SCU438, 23));
+ SIG_EXPR_LIST_DECL_SESG(D20, SDA2, I2C2, SIG_DESC_SET(SCU4B8, 11));
+ SIG_EXPR_LIST_DECL_SESG(D20, SSDA2, SI2C2, SIG_DESC_SET(SCU698, 11));
+ PIN_DECL_3(D20, GPIOJ3, I3C4SDA, SDA2, SSDA2);
+@@ -1615,7 +1606,7 @@
+  */
+ #define AF25 244
+ SIG_EXPR_LIST_DECL_SEMG(AF25, I3C3SCL, I3C3, I3C3, SIG_DESC_SET(SCU438, 20),
+-			SIG_DESC_SET(SCU4D8, 20));
++			SIG_DESC_CLEAR(SCU418, 8));
+ SIG_EXPR_LIST_DECL_SESG(AF25, FSI1CLK, FSI1, SIG_DESC_CLEAR(SCU438, 20),
+ 			SIG_DESC_SET(SCU4D8, 20));
+ PIN_DECL_(AF25, SIG_EXPR_LIST_PTR(AF25, I3C3SCL),
+@@ -1623,7 +1614,7 @@
+ 
+ #define AE26 245
+ SIG_EXPR_LIST_DECL_SEMG(AE26, I3C3SDA, I3C3, I3C3, SIG_DESC_SET(SCU438, 21),
+-			SIG_DESC_SET(SCU4D8, 21));
++			SIG_DESC_CLEAR(SCU418, 9));
+ SIG_EXPR_LIST_DECL_SESG(AE26, FSI1DATA, FSI1, SIG_DESC_CLEAR(SCU438, 21),
+ 			SIG_DESC_SET(SCU4D8, 21));
+ PIN_DECL_(AE26, SIG_EXPR_LIST_PTR(AE26, I3C3SDA),
+@@ -1635,7 +1626,7 @@
+ 
+ #define AE25 246
+ SIG_EXPR_LIST_DECL_SEMG(AE25, I3C4SCL, I3C4, I3C4, SIG_DESC_SET(SCU438, 22),
+-			SIG_DESC_SET(SCU4D8, 22));
++			SIG_DESC_CLEAR(SCU418, 10));
+ SIG_EXPR_LIST_DECL_SESG(AE25, FSI2CLK, FSI2, SIG_DESC_CLEAR(SCU438, 22),
+ 			SIG_DESC_SET(SCU4D8, 22));
+ PIN_DECL_(AE25, SIG_EXPR_LIST_PTR(AE25, I3C4SCL),
+@@ -1643,7 +1634,7 @@
+ 
+ #define AF24 247
+ SIG_EXPR_LIST_DECL_SEMG(AF24, I3C4SDA, I3C4, I3C4, SIG_DESC_SET(SCU438, 23),
+-			SIG_DESC_SET(SCU4D8, 23));
++			SIG_DESC_CLEAR(SCU418, 11));
+ SIG_EXPR_LIST_DECL_SESG(AF24, FSI2DATA, FSI2, SIG_DESC_CLEAR(SCU438, 23),
+ 			SIG_DESC_SET(SCU4D8, 23));
+ PIN_DECL_(AF24, SIG_EXPR_LIST_PTR(AF24, I3C4SDA),
+ --- linux/drivers/char/ipmi/kcs_bmc_aspeed.c	2023-07-14 14:42:46.827227372 +0800
++++ linux-new/drivers/char/ipmi/kcs_bmc_aspeed.c	2023-07-18 16:43:52.527416297 +0800
+@@ -27,7 +27,7 @@
+ 
+ #define DEVICE_NAME     "ast-kcs-bmc"
+ 
+-#define KCS_CHANNEL_MAX     10
++#define KCS_CHANNEL_MAX     16
+ 
+ /*
+  * Field class descriptions
+@@ -175,7 +175,9 @@
+ 
+ 	switch (kcs_bmc->channel) {
+ 	case 1:
+-	case 6:
++	case 5:
++	case 9:
++	case 13:
+ 		switch (priv->upstream_irq.id) {
+ 		case 12:
+ 			regmap_update_bits(priv->map, LPC_SIRQCR0, LPC_SIRQCR0_IRQ12E1,
+@@ -190,15 +192,21 @@
+ 		}
+ 		break;
+ 	case 2:
+-	case 7:
++	case 6:
++	case 10:
++	case 14:
+ 		regmap_update_bits(priv->map, LPC_HICR5, LPC_HICR5_IRQXE2, LPC_HICR5_IRQXE2);
+ 		break;
+ 	case 3:
+-	case 8:
++	case 7:
++	case 11:
++	case 15:
+ 		regmap_update_bits(priv->map, LPC_HICR5, LPC_HICR5_IRQXE3, LPC_HICR5_IRQXE3);
+ 		break;
+ 	case 4:
+-	case 9:
++	case 8:
++	case 12:
++	case 16:
+ 		regmap_update_bits(priv->map, LPC_HICRC, LPC_HICRC_IRQXE4, LPC_HICRC_IRQXE4);
+ 		break;
+ 	default:
+@@ -234,7 +242,9 @@
+ 
+ 	switch (priv->kcs_bmc.channel) {
+ 	case 1:
+-	case 6:
++	case 5:
++	case 9:
++	case 13:
+ 		regmap_update_bits(priv->map, LPC_HICR4, LPC_HICR4_LADR12AS, 0);
+ 		regmap_write(priv->map, LPC_LADR12H, addrs[0] >> 8);
+ 		regmap_write(priv->map, LPC_LADR12L, addrs[0] & 0xFF);
+@@ -248,7 +258,9 @@
+ 		break;
+ 
+ 	case 2:
+-	case 7:
++	case 6:
++	case 10:
++	case 14:
+ 		regmap_update_bits(priv->map, LPC_HICR4, LPC_HICR4_LADR12AS, LPC_HICR4_LADR12AS);
+ 		regmap_write(priv->map, LPC_LADR12H, addrs[0] >> 8);
+ 		regmap_write(priv->map, LPC_LADR12L, addrs[0] & 0xFF);
+@@ -262,14 +274,17 @@
+ 		break;
+ 
+ 	case 3:
+-	case 8:
+-		/* Channel 3 only supports inferred status IO address */
++	case 7:
++	case 11:
++	case 15:
+ 		regmap_write(priv->map, LPC_LADR3H, addrs[0] >> 8);
+ 		regmap_write(priv->map, LPC_LADR3L, addrs[0] & 0xFF);
+ 		break;
+ 
+ 	case 4:
+-	case 9:
++	case 8:
++	case 12:
++	case 16:
+ 		if (nr_addrs == 1)
+ 			regmap_write(priv->map, LPC_LADR4, ((addrs[0] + 1) << 16) | addrs[0]);
+ 		else
+@@ -316,11 +331,15 @@
+ 
+ 	switch (priv->kcs_bmc.channel) {
+ 	case 1:
+-	case 6:
++	case 5:
++	case 9:
++	case 13:
+ 		/* Needs IRQxE1 rather than (ID1IRQX, SEL1IRQX, IRQXE1) before AST2600 A3 */
+ 		break;
+ 	case 2:
+-	case 7:
++	case 6:
++	case 10:
++	case 14:
+ 		if (!(hw_type == LPC_TYIRQX_LOW || hw_type == LPC_TYIRQX_HIGH))
+ 			return -EINVAL;
+ 
+@@ -331,7 +350,9 @@
+ 
+ 		break;
+ 	case 3:
+-	case 8:
++	case 7:
++	case 11:
++	case 15:
+ 		if (!(hw_type == LPC_TYIRQX_LOW || hw_type == LPC_TYIRQX_HIGH))
+ 			return -EINVAL;
+ 
+@@ -342,7 +363,9 @@
+ 
+ 		break;
+ 	case 4:
+-	case 9:
++	case 8:
++	case 12:
++	case 16:
+ 		mask = LPC_HICRC_ID4IRQX_MASK | LPC_HICRC_TY4IRQX_MASK | LPC_HICRC_OBF4_AUTO_CLR;
+ 		val = (id << LPC_HICRC_ID4IRQX_SHIFT) | (hw_type << LPC_HICRC_TY4IRQX_SHIFT);
+ 		regmap_update_bits(priv->map, LPC_HICRC, mask, val);
+@@ -363,21 +386,29 @@
+ 
+ 	switch (kcs_bmc->channel) {
+ 	case 1:
+-	case 6:
++	case 5:
++	case 9:
++	case 13:
+ 		regmap_update_bits(priv->map, LPC_HICR0, LPC_HICR0_LPC1E, enable * LPC_HICR0_LPC1E);
+ 		return;
+ 	case 2:
+-	case 7:
++	case 6:
++	case 10:
++	case 14:
+ 		regmap_update_bits(priv->map, LPC_HICR0, LPC_HICR0_LPC2E, enable * LPC_HICR0_LPC2E);
+ 		return;
+ 	case 3:
+-	case 8:
++	case 7:
++	case 11:
++	case 15:
+ 		regmap_update_bits(priv->map, LPC_HICR0, LPC_HICR0_LPC3E, enable * LPC_HICR0_LPC3E);
+ 		regmap_update_bits(priv->map, LPC_HICR4,
+ 				   LPC_HICR4_KCSENBL, enable * LPC_HICR4_KCSENBL);
+ 		return;
+ 	case 4:
+-	case 9:
++	case 8:
++	case 12:
++	case 16:
+ 		regmap_update_bits(priv->map, LPC_HICRB, LPC_HICRB_LPC4E, enable * LPC_HICRB_LPC4E);
+ 		return;
+ 	default:
+@@ -426,22 +457,30 @@
+ 
+ 		switch (kcs_bmc->channel) {
+ 		case 1:
+-		case 6:
++		case 5:
++		case 9:
++		case 13:
+ 			regmap_update_bits(priv->map, LPC_HICR2, LPC_HICR2_IBFIE1,
+ 					   enable * LPC_HICR2_IBFIE1);
+ 			return;
+ 		case 2:
+-		case 7:
++		case 6:
++		case 10:
++		case 14:
+ 			regmap_update_bits(priv->map, LPC_HICR2, LPC_HICR2_IBFIE2,
+ 					   enable * LPC_HICR2_IBFIE2);
+ 			return;
+ 		case 3:
+-		case 8:
++		case 7:
++		case 11:
++		case 15:
+ 			regmap_update_bits(priv->map, LPC_HICR2, LPC_HICR2_IBFIE3,
+ 					   enable * LPC_HICR2_IBFIE3);
+ 			return;
+ 		case 4:
+-		case 9:
++		case 8:
++		case 12:
++		case 16:
+ 			regmap_update_bits(priv->map, LPC_HICRB, LPC_HICRB_IBFIE4,
+ 					   enable * LPC_HICRB_IBFIE4);
+ 			return;
+@@ -481,18 +520,14 @@
+ }
+ 
+ static const struct kcs_ioreg ast_kcs_bmc_ioregs[KCS_CHANNEL_MAX] = {
+-	{ .idr = LPC_IDR1, .odr = LPC_ODR1, .str = LPC_STR1 },
+-	{ .idr = LPC_IDR2, .odr = LPC_ODR2, .str = LPC_STR2 },
+-	{ .idr = LPC_IDR3, .odr = LPC_ODR3, .str = LPC_STR3 },
+-	{ .idr = LPC_IDR4, .odr = LPC_ODR4, .str = LPC_STR4 },
+-	{ /* legacy, not used */ },
++	{ /* 1-based index, reserved */ },
+ 	{ .idr = LPC_IDR1, .odr = LPC_ODR1, .str = LPC_STR1 },
+ 	{ .idr = LPC_IDR2, .odr = LPC_ODR2, .str = LPC_STR2 },
+ 	{ .idr = LPC_IDR3, .odr = LPC_ODR3, .str = LPC_STR3 },
+ 	{ .idr = LPC_IDR4, .odr = LPC_ODR4, .str = LPC_STR4 },
+ };
+ 
+-static int aspeed_kcs_of_v1_get_channel(struct platform_device *pdev)
++static int aspeed_kcs_of_get_channel(struct platform_device *pdev)
+ {
+ 	struct device_node *np;
+ 	u32 channel;
+@@ -525,39 +560,6 @@
+ 	return 2;
+ }
+ 
+-static int aspeed_kcs_of_v2_get_channel(struct platform_device *pdev)
+-{
+-	struct device_node *np;
+-	struct kcs_ioreg ioreg;
+-	const __be32 *reg;
+-	int i;
+-
+-	np = pdev->dev.of_node;
+-
+-	/* Don't translate addresses, we want offsets for the regmaps */
+-	reg = of_get_address(np, 0, NULL, NULL);
+-	if (!reg)
+-		return -EINVAL;
+-	ioreg.idr = be32_to_cpup(reg);
+-
+-	reg = of_get_address(np, 1, NULL, NULL);
+-	if (!reg)
+-		return -EINVAL;
+-	ioreg.odr = be32_to_cpup(reg);
+-
+-	reg = of_get_address(np, 2, NULL, NULL);
+-	if (!reg)
+-		return -EINVAL;
+-	ioreg.str = be32_to_cpup(reg);
+-
+-	for (i = 0; i < ARRAY_SIZE(ast_kcs_bmc_ioregs); i++) {
+-		if (!memcmp(&ast_kcs_bmc_ioregs[i], &ioreg, sizeof(ioreg)))
+-			return i + 1;
+-	}
+-
+-	return -EINVAL;
+-}
+-
+ static int
+ aspeed_kcs_of_v2_get_io_address(struct platform_device *pdev, u32 addrs[2])
+ {
+@@ -609,6 +611,7 @@
+ 		return nr_addrs;
+ 
+ 	np = pdev->dev.of_node;
++
+ 	rc = of_property_read_u32_array(np, "aspeed,lpc-interrupts", upstream_irq, 2);
+ 	if (rc && rc != -EINVAL)
+ 		return -EINVAL;
+@@ -622,7 +625,7 @@
+ 	kcs_bmc = &priv->kcs_bmc;
+ 	kcs_bmc->dev = &pdev->dev;
+ 	kcs_bmc->channel = channel;
+-	kcs_bmc->ioreg = ast_kcs_bmc_ioregs[channel - 1];
++	kcs_bmc->ioreg = ast_kcs_bmc_ioregs[channel];
+ 	kcs_bmc->ops = &aspeed_kcs_ops;
+ 
+ 	priv->map = syscon_node_to_regmap(pdev->dev.parent->of_node);
+@@ -635,10 +638,18 @@
+ 	priv->obe.remove = false;
+ 	timer_setup(&priv->obe.timer, aspeed_kcs_check_obe, 0);
+ 
++	/* mask IRQ for safety */
++	aspeed_kcs_irq_mask_update(kcs_bmc, (KCS_BMC_EVENT_TYPE_IBF | KCS_BMC_EVENT_TYPE_OBE), 0);
++
+ 	rc = aspeed_kcs_set_address(kcs_bmc, addrs, nr_addrs);
+ 	if (rc)
+ 		return rc;
+ 
++	/* Host to BMC IRQ */
++	rc = aspeed_kcs_config_downstream_irq(kcs_bmc, pdev);
++	if (rc)
++		return rc;
++
+ 	/* BMC to Host IRQ */
+ 	if (have_upstream_irq) {
+ 		rc = aspeed_kcs_config_upstream_irq(priv, upstream_irq[0], upstream_irq[1]);
+@@ -650,7 +661,6 @@
+ 
+ 	platform_set_drvdata(pdev, priv);
+ 
+-	aspeed_kcs_irq_mask_update(kcs_bmc, (KCS_BMC_EVENT_TYPE_IBF | KCS_BMC_EVENT_TYPE_OBE), 0);
+ 	aspeed_kcs_enable_channel(kcs_bmc, true);
+ 
+ 	rc = kcs_bmc_add_device(&priv->kcs_bmc);
+@@ -659,11 +669,6 @@
+ 		return rc;
+ 	}
+ 
+-	/* Host to BMC IRQ */
+-	rc = aspeed_kcs_config_downstream_irq(kcs_bmc, pdev);
+-	if (rc)
+-		return rc;
+-
+ 	dev_info(&pdev->dev, "Initialised channel %d at 0x%x\n",
+ 			kcs_bmc->channel, addrs[0]);
+ 
+@@ -690,12 +695,12 @@
+ }
+ 
+ static const struct aspeed_kcs_of_ops of_v1_ops = {
+-	.get_channel = aspeed_kcs_of_v1_get_channel,
++	.get_channel = aspeed_kcs_of_get_channel,
+ 	.get_io_address = aspeed_kcs_of_v1_get_io_address,
+ };
+ 
+ static const struct aspeed_kcs_of_ops of_v2_ops = {
+-	.get_channel = aspeed_kcs_of_v2_get_channel,
++	.get_channel = aspeed_kcs_of_get_channel,
+ 	.get_io_address = aspeed_kcs_of_v2_get_io_address,
+ };
+
+ --- linux/drivers/usb/gadget/udc/aspeed-vhub/core.c	2023-07-14 14:42:56.163177395 +0800
++++ linux-new/drivers/usb/gadget/udc/aspeed-vhub/core.c	2023-07-14 14:59:10.203814017 +0800
+@@ -74,7 +74,7 @@
+ 
+ 	list_del_init(&req->queue);
+ 
+-	if (req->req.status == -EINPROGRESS || (status == -EOVERFLOW))
++	if ((req->req.status == -EINPROGRESS) ||  (status == -EOVERFLOW))
+ 		req->req.status = status;
+ 
+ 	if (req->req.dma) {

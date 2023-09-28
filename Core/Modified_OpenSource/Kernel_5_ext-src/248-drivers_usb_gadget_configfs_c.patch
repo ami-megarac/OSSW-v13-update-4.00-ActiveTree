@@ -1,0 +1,17 @@
+--- linux/drivers/usb/gadget/configfs.c	2022-12-21 11:44:50.298390448 +0800
++++ linux_new/drivers/usb/gadget/configfs.c	2022-12-26 16:19:36.014781000 +0800
+@@ -1800,6 +1800,14 @@
+ 		}
+ 	}
+ 
++	item = config_group_find_item(group,"ipmi_usb");
++	if(item != NULL) {
++		gi_check = to_gadget_info(item);
++		if(gi_check->bind_cdev) {
++			check_bind_dev_node = 1;
++		}
++	}
++
+ 	if(!check_bind_dev_node) {
+ 		cdev_init(&gi->gcdev, &usb_gadget_fops);
+ 		

@@ -1,0 +1,77 @@
+diff -Nuar a/drivers/net/phy/broadcom.c b/drivers/net/phy/broadcom.c
+--- a/drivers/net/phy/broadcom.c	2023-09-01 14:23:56.704785732 +0530
++++ b/drivers/net/phy/broadcom.c	2023-09-01 14:24:40.393253658 +0530
+@@ -11,7 +11,6 @@
+  */
+ 
+ #include "bcm-phy-lib.h"
+-#include <linux/delay.h>
+ #include <linux/module.h>
+ #include <linux/phy.h>
+ #include <linux/brcmphy.h>
+@@ -495,26 +494,6 @@
+ 	if (err < 0)
+ 		return err;
+ 
+-	/* The datasheet indicates the PHY needs up to 1us to complete a reset,
+-	 * build some slack here.
+-	 */
+-	usleep_range(1000, 2000);
+-
+-	/* The PHY requires 65 MDC clock cycles to complete a write operation
+-	 * and turnaround the line properly.
+-	 *
+-	 * We ignore -EIO here as the MDIO controller (e.g.: mdio-bcm-unimac)
+-	 * may flag the lack of turn-around as a read failure. This is
+-	 * particularly true with this combination since the MDIO controller
+-	 * only used 64 MDC cycles. This is not a critical failure in this
+-	 * specific case and it has no functional impact otherwise, so we let
+-	 * that one go through. If there is a genuine bus error, the next read
+-	 * of MII_BRCM_FET_INTREG will error out.
+-	 */
+-	err = phy_read(phydev, MII_BMCR);
+-	if (err < 0 && err != -EIO)
+-		return err;
+-
+ 	reg = phy_read(phydev, MII_BRCM_FET_INTREG);
+ 	if (reg < 0)
+ 		return reg;
+@@ -682,7 +661,6 @@
+ 	.phy_id_mask	= 0xfffffff0,
+ 	.name		= "Broadcom BCM54616S",
+ 	/* PHY_GBIT_FEATURES */
+-	.soft_reset     = genphy_soft_reset,
+ 	.config_init	= bcm54xx_config_init,
+ 	.config_aneg	= bcm54616s_config_aneg,
+ 	.ack_interrupt	= bcm_phy_ack_intr,
+diff -Nuar a/drivers/net/phy/mdio-aspeed.c b/drivers/net/phy/mdio-aspeed.c
+--- a/drivers/net/phy/mdio-aspeed.c	2023-09-01 14:23:56.704785732 +0530
++++ b/drivers/net/phy/mdio-aspeed.c	2023-09-01 14:24:40.393253658 +0530
+@@ -156,7 +156,6 @@
+ 	{ .compatible = "aspeed,ast2600-mdio", },
+ 	{ },
+ };
+-MODULE_DEVICE_TABLE(of, aspeed_mdio_of_match);
+ 
+ static struct platform_driver aspeed_mdio_driver = {
+ 	.driver = {
+diff -Nuar a/drivers/net/phy/realtek.c b/drivers/net/phy/realtek.c
+--- a/drivers/net/phy/realtek.c	2023-09-01 14:23:56.704785732 +0530
++++ b/drivers/net/phy/realtek.c	2023-09-01 14:24:40.393253658 +0530
+@@ -558,6 +558,16 @@
+ 		.read_page	= rtl821x_read_page,
+ 		.write_page	= rtl821x_write_page,
+ 	}, {		
++		PHY_ID_MATCH_MODEL(0x001cc870),
++		.name		= "RTL8211F-VD Gigabit Ethernet",
++		.config_init	= &rtl8211f_config_init,
++		.ack_interrupt	= &rtl8211f_ack_interrupt,
++		.config_intr	= &rtl8211f_config_intr,
++		.suspend	= genphy_suspend,
++		.resume		= genphy_resume,
++		.read_page	= rtl821x_read_page,
++		.write_page	= rtl821x_write_page,
++	}, {
+ 		.name		= "Generic FE-GE Realtek PHY",
+ 		.match_phy_device = rtlgen_match_phy_device,
+ 		.suspend	= genphy_suspend,

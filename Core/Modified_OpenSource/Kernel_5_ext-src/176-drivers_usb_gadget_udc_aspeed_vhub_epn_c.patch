@@ -1,0 +1,52 @@
+--- linux/drivers/usb/gadget/udc/aspeed-vhub/core.c	2022-12-05 14:58:18.875468416 +0800
++++ linux-new/drivers/usb/gadget/udc/aspeed-vhub/core.c	2022-12-05 15:43:53.788686806 +0800
+@@ -74,7 +74,7 @@
+ 
+ 	list_del_init(&req->queue);
+ 
+-	if (req->req.status == -EINPROGRESS)
++	if (req->req.status == -EINPROGRESS || (status == -EOVERFLOW))
+ 		req->req.status = status;
+ 
+ 	if (req->req.dma) {
+--- linux/drivers/usb/gadget/udc/aspeed-vhub/epn.c	2022-12-05 14:58:18.015469887 +0800
++++ linux-new/drivers/usb/gadget/udc/aspeed-vhub/epn.c	2022-12-06 18:19:43.702928651 +0800
+@@ -89,6 +89,7 @@
+ {
+ 	struct ast_vhub_req *req;
+ 	unsigned int len;
++	int status = 0;
+ 	u32 stat;
+ 
+ 	/* Read EP status */
+@@ -124,9 +125,15 @@
+ 	len = VHUB_EP_DMA_TX_SIZE(stat);
+ 
+ 	/* If not using DMA, copy data out if needed */
+-	if (!req->req.dma && !ep->epn.is_in && len)
+-		memcpy(req->req.buf + req->req.actual, ep->buf, len);
+-
++	if (!req->req.dma && !ep->epn.is_in && len) {
++		if (req->req.actual + len > req->req.length) {
++			req->last_desc = 1;
++			status = -EOVERFLOW;
++			goto done;
++		} else {
++			memcpy(req->req.buf + req->req.actual, ep->buf, len);
++		}
++	}
+ 	/* Adjust size */
+ 	req->req.actual += len;
+ 
+@@ -134,9 +141,10 @@
+ 	if (len < ep->ep.maxpacket)
+ 		req->last_desc = 1;
+ 
++done:
+ 	/* That's it ? complete the request and pick a new one */
+ 	if (req->last_desc >= 0) {
+-		ast_vhub_done(ep, req, 0);
++		ast_vhub_done(ep, req, status);
+ 		req = list_first_entry_or_null(&ep->queue, struct ast_vhub_req,
+ 					       queue);
+ 

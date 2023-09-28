@@ -1,6 +1,125 @@
-diff -Naur linux_old/drivers/jtag/jtag.c linux/drivers/jtag/jtag.c
---- linux_old/drivers/jtag/jtag.c	2023-03-25 16:39:12.520823950 +0800
-+++ linux/drivers/jtag/jtag.c	2023-03-25 16:40:05.656822246 +0800
+--- ori_linux/include/linux/jtag.h	2023-04-06 16:31:38.531099292 +0800
++++ linux/include/linux/jtag.h	2023-04-06 16:56:41.522328539 +0800
+@@ -43,7 +43,7 @@
+ 
+ void *jtag_priv(struct jtag *jtag);
+ int devm_jtag_register(struct device *dev, struct jtag *jtag);
+-int devm_asd_jtag_register(struct device *dev, struct jtag *jtag);
++int devm_debug_jtag_register(struct device *dev, struct jtag *jtag);
+ struct jtag *jtag_alloc(struct device *host, size_t priv_size,
+ 			const struct jtag_ops *ops);
+ void jtag_free(struct jtag *jtag);
+diff -Naur ori_linux/drivers/jtag/jtag-aspeed.c linux/drivers/jtag/jtag-aspeed.c
+--- ori_linux/drivers/jtag/jtag-aspeed.c	2023-04-06 16:31:38.535097334 +0800
++++ linux/drivers/jtag/jtag-aspeed.c	2023-04-06 16:55:29.000000000 +0800
+@@ -183,8 +183,8 @@
+ 	[ASPEED_JTAG_STAT]     = "ASPEED_JTAG_STAT",
+ };
+ 
+-#ifdef	CONFIG_SPX_FEATURE_GLOBAL_INTEL_REMOTE_DBG_SUPPORT
+-#define ASPEED_JTAG_NAME		"asd-jtag"
++#if defined(CONFIG_SPX_FEATURE_GLOBAL_INTEL_REMOTE_DBG_SUPPORT) || defined(CONFIG_SPX_FEATURE_GLOBAL_AMD_REMOTE_DBG_SUPPORT)
++#define ASPEED_JTAG_NAME		"debug-jtag"
+ #else
+ #define ASPEED_JTAG_NAME		"jtag-aspeed"
+ #endif
+@@ -1401,7 +1401,7 @@
+ 	return 0;
+ }
+ 
+-#ifdef CONFIG_SPX_FEATURE_GLOBAL_INTEL_REMOTE_DBG_SUPPORT
++#if defined(CONFIG_SPX_FEATURE_GLOBAL_INTEL_REMOTE_DBG_SUPPORT) || defined(CONFIG_SPX_FEATURE_GLOBAL_AMD_REMOTE_DBG_SUPPORT)
+ static int reserved_idx = -1;
+ struct device_node *reserved_pjtag_np = NULL;
+ #endif
+@@ -1409,7 +1409,7 @@
+ static int aspeed_jtag_init(struct platform_device *pdev,
+ 			    struct aspeed_jtag *aspeed_jtag)
+ {
+-#ifdef	CONFIG_SPX_FEATURE_GLOBAL_INTEL_REMOTE_DBG_SUPPORT
++#if defined(CONFIG_SPX_FEATURE_GLOBAL_INTEL_REMOTE_DBG_SUPPORT) || defined(CONFIG_SPX_FEATURE_GLOBAL_AMD_REMOTE_DBG_SUPPORT)
+ 	int idx = -1;
+ 	struct resource pjtag_res;
+ 	struct device_node *pjtag_np = NULL;
+@@ -1426,7 +1426,7 @@
+ 	memset(aspeed_jtag->pad_data_zero, 0,
+ 	       sizeof(aspeed_jtag->pad_data_zero));
+ 
+-#ifdef	CONFIG_SPX_FEATURE_GLOBAL_INTEL_REMOTE_DBG_SUPPORT
++#if defined(CONFIG_SPX_FEATURE_GLOBAL_INTEL_REMOTE_DBG_SUPPORT) || defined(CONFIG_SPX_FEATURE_GLOBAL_AMD_REMOTE_DBG_SUPPORT)
+ 	idx = ++reserved_idx;
+    
+ 	pjtag_np = of_find_compatible_node(reserved_pjtag_np, NULL, "aspeed,ast2600-jtag");
+@@ -1469,7 +1469,7 @@
+ 		return -ENOENT;
+ 	}
+ 
+-#ifndef	CONFIG_SPX_FEATURE_GLOBAL_INTEL_REMOTE_DBG_SUPPORT
++#if !defined(CONFIG_SPX_FEATURE_GLOBAL_INTEL_REMOTE_DBG_SUPPORT) && !defined(CONFIG_SPX_FEATURE_GLOBAL_AMD_REMOTE_DBG_SUPPORT)
+ 	aspeed_jtag->rst = devm_reset_control_get_shared(&pdev->dev, NULL);
+ 	if (IS_ERR(aspeed_jtag->rst)) {
+ 		dev_err(aspeed_jtag->dev,
+@@ -1502,7 +1502,7 @@
+ 			      struct aspeed_jtag *aspeed_jtag)
+ {
+ 	aspeed_jtag_write(aspeed_jtag, 0, ASPEED_JTAG_ISR);
+-#ifndef	CONFIG_SPX_FEATURE_GLOBAL_INTEL_REMOTE_DBG_SUPPORT
++#if !defined(CONFIG_SPX_FEATURE_GLOBAL_INTEL_REMOTE_DBG_SUPPORT) && !defined(CONFIG_SPX_FEATURE_GLOBAL_AMD_REMOTE_DBG_SUPPORT)
+ 	/* Disable clock */
+ 	aspeed_jtag_write(aspeed_jtag, 0, ASPEED_JTAG_CTRL);
+ 	reset_control_assert(aspeed_jtag->rst);
+@@ -1594,8 +1594,8 @@
+ static const struct of_device_id aspeed_jtag_of_match[] = {
+ 	{ .compatible = "aspeed,ast2400-jtag", .data = &ast25xx_functions },
+ 	{ .compatible = "aspeed,ast2500-jtag", .data = &ast25xx_functions },
+-#ifdef	CONFIG_SPX_FEATURE_GLOBAL_INTEL_REMOTE_DBG_SUPPORT
+-	{ .compatible = "aspeed,asd-jtag", .data = &ast26xx_functions },
++#if defined(CONFIG_SPX_FEATURE_GLOBAL_INTEL_REMOTE_DBG_SUPPORT) || defined(CONFIG_SPX_FEATURE_GLOBAL_AMD_REMOTE_DBG_SUPPORT)
++	{ .compatible = "aspeed,debug-jtag", .data = &ast26xx_functions },
+ #else
+ 	{ .compatible = "aspeed,ast2600-jtag", .data = &ast26xx_functions },
+ #endif
+@@ -1632,8 +1632,8 @@
+ 		goto err_jtag_init;
+ 
+ 	/* Initialize JTAG core structure*/
+-#ifdef	CONFIG_SPX_FEATURE_GLOBAL_INTEL_REMOTE_DBG_SUPPORT
+-	err = devm_asd_jtag_register(aspeed_jtag->dev, jtag);
++#if defined(CONFIG_SPX_FEATURE_GLOBAL_INTEL_REMOTE_DBG_SUPPORT) || defined(CONFIG_SPX_FEATURE_GLOBAL_AMD_REMOTE_DBG_SUPPORT)
++	err = devm_debug_jtag_register(aspeed_jtag->dev, jtag);
+ #else
+ 	err = devm_jtag_register(aspeed_jtag->dev, jtag);
+ #endif
+diff -Naur ori_linux/drivers/jtag/jtag.c linux/drivers/jtag/jtag.c
+--- ori_linux/drivers/jtag/jtag.c	2023-04-06 16:31:38.535097334 +0800
++++ linux/drivers/jtag/jtag.c	2023-04-06 17:47:23.647002754 +0800
+@@ -23,7 +23,7 @@
+ 
+ static DEFINE_IDA(jtag_ida);
+ 
+-static DEFINE_IDA(ASD_jtag_ida);
++static DEFINE_IDA(debug_jtag_ida);
+ 
+ void *jtag_priv(struct jtag *jtag)
+ {
+@@ -307,7 +307,7 @@
+ 	return err;
+ }
+ 
+-static int asd_jtag_register(struct jtag *jtag)
++static int debug_jtag_register(struct jtag *jtag)
+ {
+ 	struct device *dev = jtag->miscdev.parent;
+ 	int err;
+@@ -316,7 +316,7 @@
+ 	if (!dev)
+ 		return -ENODEV;
+ 
+-	id = ida_simple_get(&ASD_jtag_ida, 0, 0, GFP_KERNEL);
++	id = ida_simple_get(&debug_jtag_ida, 0, 0, GFP_KERNEL);
+ 	if (id < 0)
+ 		return id;
+ 
 @@ -324,7 +324,7 @@
  
  	jtag->miscdev.fops =  &jtag_fops;
@@ -10,3 +129,78 @@ diff -Naur linux_old/drivers/jtag/jtag.c linux/drivers/jtag/jtag.c
  
  	if (!jtag->miscdev.name) {
  		err = -ENOMEM;
+@@ -341,7 +341,7 @@
+ err_jtag_name:
+ 	kfree(jtag->miscdev.name);
+ err_jtag_alloc:
+-	ida_simple_remove(&ASD_jtag_ida, id);
++	ida_simple_remove(&debug_jtag_ida, id);
+ 	return err;
+ }
+ 
+@@ -350,14 +350,15 @@
+ 	misc_deregister(&jtag->miscdev);
+ 	kfree(jtag->miscdev.name);
+ 	ida_simple_remove(&jtag_ida, jtag->id);
+-	jtag_free(jtag);//AMI's fix
++	jtag_free(jtag);//AMI's Add
+ }
+ 
+-static void asd_jtag_unregister(struct jtag *jtag)
++static void debug_jtag_unregister(struct jtag *jtag)
+ {
+ 	misc_deregister(&jtag->miscdev);
+ 	kfree(jtag->miscdev.name);
+-	ida_simple_remove(&ASD_jtag_ida, jtag->id);
++	ida_simple_remove(&debug_jtag_ida, jtag->id);
++        jtag_free(jtag);//AMI's Add
+ }
+ 
+ static void devm_jtag_unregister(struct device *dev, void *res)
+@@ -365,9 +366,9 @@
+ 	jtag_unregister(*(struct jtag **)res);
+ }
+ 
+-static void devm_asd_jtag_unregister(struct device *dev, void *res)
++static void devm_debug_jtag_unregister(struct device *dev, void *res)
+ {
+-	asd_jtag_unregister(*(struct jtag **)res);
++	debug_jtag_unregister(*(struct jtag **)res);
+ }
+ 
+ int devm_jtag_register(struct device *dev, struct jtag *jtag)
+@@ -391,17 +392,17 @@
+ }
+ EXPORT_SYMBOL_GPL(devm_jtag_register);
+ 
+-int devm_asd_jtag_register(struct device *dev, struct jtag *jtag)
++int devm_debug_jtag_register(struct device *dev, struct jtag *jtag)
+ {
+ 	struct jtag **ptr;
+ 	int ret;
+ 
+-	ptr = devres_alloc(devm_asd_jtag_unregister, sizeof(struct jtag *),
++	ptr = devres_alloc(devm_debug_jtag_unregister, sizeof(struct jtag *),
+ 			   GFP_KERNEL);
+ 	if (!ptr)
+ 		return -ENOMEM;
+ 
+-	ret = asd_jtag_register(jtag);
++	ret = debug_jtag_register(jtag);
+ 	if (!ret) {
+ 		*ptr = jtag;
+ 		devres_add(dev, ptr);
+@@ -410,11 +411,12 @@
+ 	}
+ 	return ret;
+ }
+-EXPORT_SYMBOL_GPL(devm_asd_jtag_register);
++EXPORT_SYMBOL_GPL(devm_debug_jtag_register);
+ 
+ static void __exit jtag_exit(void)
+ {
+ 	ida_destroy(&jtag_ida);
++        ida_destroy(&debug_jtag_ida);
+ }
+ 
+ module_exit(jtag_exit);

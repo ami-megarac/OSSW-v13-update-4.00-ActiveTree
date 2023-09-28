@@ -94,7 +94,7 @@ diff -Naur linux_old/drivers/i2c/busses/aspeed-i2c-new-global.c linux/drivers/i2
 -MODULE_DESCRIPTION("ASPEED I2C Global Driver");
 -MODULE_LICENSE("GPL v2");
 diff -Naur linux_old/drivers/i2c/busses/aspeed-i2c-new-global.h linux/drivers/i2c/busses/aspeed-i2c-new-global.h
---- linux_old/drivers/i2c/busses/aspeed-i2c-new-global.h	2022-08-05 17:28:12.068753068 +0800
+--- linux_old/drivers/i2c/busses/aspeed-i2c-new-global.h	2022-08-05 17:28:12.068753000 +0800
 +++ linux/drivers/i2c/busses/aspeed-i2c-new-global.h	1970-01-01 08:00:00.000000000 +0800
 @@ -1,23 +0,0 @@
 -/* SPDX-License-Identifier: GPL-2.0-or-later */
@@ -1144,6 +1144,9 @@ diff -Naur linux_old/drivers/i2c/busses/i2c-ast2600.c linux/drivers/i2c/busses/i
 +							       AST2600_I2CC_BUFF_CTRL));
 +			for (i = 0; i < slave_rx_len; i++) {
 +				value = readb(i2c_bus->buf_base + i);
++#ifdef CONFIG_SPX_FEATURE_I2CMUX_ADDON_SUPPORT
++                               add_slave_byte(i2c_bus, value);
++#endif
 +				i2c_slave_event(i2c_bus->slave, I2C_SLAVE_WRITE_RECEIVED, &value);
 +			}
 +			writel(AST2600_I2CC_SET_RX_BUF_LEN(i2c_bus->buf_size),
@@ -2510,9 +2513,9 @@ diff -Naur linux_old/drivers/i2c/busses/i2c-ast2600-global.h linux/drivers/i2c/b
 +
 +#endif /* I2C_AST2600_GLOBAL_H */
 diff -Naur linux_old/drivers/i2c/busses/i2c-new-aspeed.c linux/drivers/i2c/busses/i2c-new-aspeed.c
---- linux_old/drivers/i2c/busses/i2c-new-aspeed.c	2022-08-04 17:39:51.626130000 +0800
+--- linux_old/drivers/i2c/busses/i2c-new-aspeed.c	2022-09-07 10:40:16.779189000 +0800
 +++ linux/drivers/i2c/busses/i2c-new-aspeed.c	1970-01-01 08:00:00.000000000 +0800
-@@ -1,1951 +0,0 @@
+@@ -1,1955 +0,0 @@
 -// SPDX-License-Identifier: GPL-2.0-only
 -/*
 - * ASPEED New I2C controller for the Aspeed AST2600 SoCS
@@ -4124,7 +4127,11 @@ diff -Naur linux_old/drivers/i2c/busses/i2c-new-aspeed.c linux/drivers/i2c/busse
 -		i2c_bus->multi_master = true;
 -	else
 -		fun_ctrl |= AST_I2CC_MULTI_MASTER_DIS;
--
+-	
+-	if(((int) i2c_bus->reg_base & 0x0000FF0) == 0x00000500)//SDA10
+-	{
+-		fun_ctrl |= AST_I2CC_SDA_DRIVE_1T_EN;
+-	}
 -	/* Enable Master Mode */
 -	writel(fun_ctrl, i2c_bus->reg_base + AST_I2CC_FUN_CTRL);
 -	/* disable slave address */

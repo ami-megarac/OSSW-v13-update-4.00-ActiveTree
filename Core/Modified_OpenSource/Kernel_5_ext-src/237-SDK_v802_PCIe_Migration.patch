@@ -1,0 +1,21 @@
+--- ori_linux/arch/arm/boot/dts/aspeed-g6-pinctrl.dtsi	2022-09-07 12:46:19.057821790 +0800
++++ linux/arch/arm/boot/dts/aspeed-g6-pinctrl.dtsi	2022-09-07 13:04:22.293878272 +0800
+@@ -2,7 +2,17 @@
+ // Copyright 2019 IBM Corp.
+ 
+ &pinctrl {
+-	pinctrl_adc0_default: adc0_default {
++    pinctrl_pcierc0_default: pcierc0_default {
++        function = "PCIERC0";
++        groups = "PCIERC0";
++    };
++
++    pinctrl_pcierc1_default: pcierc1_default {
++        function = "PCIERC1";
++        groups = "PCIERC1";
++    };
++
++    pinctrl_adc0_default: adc0_default {
+ 		function = "ADC0";
+ 		groups = "ADC0";
+ 	};

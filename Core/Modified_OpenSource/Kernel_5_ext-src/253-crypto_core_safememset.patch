@@ -1,0 +1,96 @@
+diff -Naur linux_old/drivers/crypto/crypto_core/crypto.c linux_new/drivers/crypto/crypto_core/crypto.c
+--- linux_old/drivers/crypto/crypto_core/crypto.c	2023-02-17 17:32:57.812658658 +0530
++++ linux_new/drivers/crypto/crypto_core/crypto.c	2023-03-20 19:39:02.956554541 +0530
+@@ -73,6 +73,8 @@
+ #include "_cryptodev.h"
+ #include "crypto_helper.h"
+ 
++extern void safe_memset(void *ptr, int value, size_t num);
++
+ int crypto_helper_dev_get_cipher_keylen(unsigned int *keylen, struct session_op *sop,int aead)
+ {
+ 	unsigned int klen = sop->keylen;
+@@ -599,8 +601,8 @@
+ 	struct scatterlist dst;
+ 	int err=0;
+ 	
+-	memset(&src,0,sizeof(src));
+-	memset(&dst,0,sizeof(dst));
++	safe_memset(&src,0,sizeof(src));
++	safe_memset(&dst,0,sizeof(dst));
+ 
+ 	ber_key = crypto_helper_dev_alloc_rsa_pub_key(pkop, &ber_key_len);
+ 	if (!ber_key) {
+@@ -717,7 +719,7 @@
+ 	size_t nbytes=0, bufsize=0;
+ 	int ret = 0;
+ 
+-	memset(&sg,0,sizeof(sg));
++	safe_memset(&sg,0,sizeof(sg));
+ 
+ 	nbytes = cop->len;
+ 	data = (char *)__get_free_page(GFP_KERNEL);
+@@ -1349,7 +1351,7 @@
+ 	uint8_t pad[TLS_MAX_PADDING_SIZE]={0};
+ 	int pad_size = block_size - (len % block_size);
+ 
+-	memset(pad, pad_size - 1, pad_size);
++	safe_memset(pad, pad_size - 1, pad_size);
+ 
+ 	scatterwalk_map_and_copy(pad, dst_sg, len, pad_size, 1);
+ 
+@@ -1660,7 +1662,7 @@
+ 	struct scatterlist tmp;
+ 	int ret=0;
+ 
+-	memset(&tmp,0,sizeof(tmp));
++	safe_memset(&tmp,0,sizeof(tmp));
+ 
+ 	if (unlikely(caop->auth_len > PAGE_SIZE)) {
+ 		DBUG("huge data\n");
+diff -Naur linux_old/drivers/crypto/crypto_core/cryptodev.c linux_new/drivers/crypto/crypto_core/cryptodev.c
+--- linux_old/drivers/crypto/crypto_core/cryptodev.c	2023-02-17 17:32:57.812658658 +0530
++++ linux_new/drivers/crypto/crypto_core/cryptodev.c	2023-03-20 19:38:39.964386902 +0530
+@@ -62,6 +62,16 @@
+ 
+ static struct workqueue_struct *crypto_helper_dev_wq;
+ 
++void safe_memset(void *ptr, int value, size_t num)
++{
++    volatile unsigned char *p = ptr;
++    while (num--){
++	*p++ = value;
++    }
++
++    return;
++}
++
+ static int crypto_create_session(struct fcrypt *fcr, struct session_op *sop, int crid)
+ {
+ 	struct csession	*ses_new = NULL, *ses_ptr=NULL;
+@@ -72,7 +82,7 @@
+ 	keys_k keys;
+ 	unsigned int keylen=0;
+ 
+-	memset(&keys,0,sizeof(keys));
++	safe_memset(&keys,0,sizeof(keys));
+ 	
+ 	/* magic number for validating the openssl engine */
+ 	if(sop->magic != DRIVER_MAGIC_NUM)
+@@ -735,11 +745,11 @@
+ 	int ret=0, fd=-1;
+ 	int crid=0;
+ 
+-	memset(&cphop,0,sizeof(cphop));
+-	memset(&siop,0,sizeof(siop));
+-	memset(&kcaop,0,sizeof(kcaop));
+-	memset(&kcop,0,sizeof(kcop));
+-	memset(&sop,0,sizeof(sop));
++	safe_memset(&cphop,0,sizeof(cphop));
++	safe_memset(&siop,0,sizeof(siop));
++	safe_memset(&kcaop,0,sizeof(kcaop));
++	safe_memset(&kcop,0,sizeof(kcop));
++	safe_memset(&sop,0,sizeof(sop));
+ 
+ 	if (unlikely(!pcr))
+ 	{

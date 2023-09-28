@@ -1,0 +1,11 @@
+--- b/net/ipv6/mcast_snoop.c	2023-08-07 15:04:54.199057295 +0530
++++ a/net/ipv6/mcast_snoop.c	2023-08-07 15:09:15.710377781 +0530
+@@ -88,7 +88,7 @@
+ 
+ 		len = skb_transport_offset(skb) + sizeof(struct mld2_query);
+ 		if (!ipv6_mc_may_pull(skb, len))
+-			return -ENODATA;
++			return -EINVAL;
+ 	}
+ 
+ 	mld = (struct mld_msg *)skb_transport_header(skb);

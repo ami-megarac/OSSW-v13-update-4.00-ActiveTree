@@ -792,8 +792,8 @@
  		return 0;
  
  	case RNDIS_MSG_QUERY:
---- linux/drivers/usb/gadget/function/f_hid.c	2022-03-28 14:50:51.556012666 +0800
-+++ linux-5.4.184/drivers/usb/gadget/function/f_hid.c	2022-03-28 16:49:31.933631642 +0800
+--- linux-5.4.251/drivers/usb/gadget/function/f_hid.c	2023-07-27 14:37:45.000000000 +0800
++++ linux-new/drivers/usb/gadget/function/f_hid.c	2023-08-15 17:10:24.487603736 +0800
 @@ -20,12 +20,16 @@
  #include "u_f.h"
  #include "u_hid.h"
@@ -811,24 +811,18 @@
  
  /*-------------------------------------------------------------------------*/
  /*                            HID gadget struct                            */
-@@ -237,85 +241,17 @@
+@@ -280,138 +284,16 @@
  	&ct_func_string_table,
  	NULL,
  };
+-
+-/*-------------------------------------------------------------------------*/
+-/*                              Char Device                                */
+-
+-static ssize_t f_hidg_intout_read(struct file *file, char __user *buffer,
+-				  size_t count, loff_t *ptr)
 +static int FillLedPacket(int Data)
-+{
-+	hid_data.DataLen = 1;
-+	hid_data.Data = (uint8)Data;
-+	DataReceived = 1;
-+	return 1;
-+}
- 
- /*-------------------------------------------------------------------------*/
- /*                              Char Device                                */
- 
--static ssize_t f_hidg_read(struct file *file, char __user *buffer,
--			size_t count, loff_t *ptr)
--{
+ {
 -	struct f_hidg *hidg = file->private_data;
 -	struct f_hidg_req_list *list;
 -	struct usb_request *req;
@@ -843,15 +837,15 @@
 -
 -	spin_lock_irqsave(&hidg->read_spinlock, flags);
 -
--#define READ_COND (!list_empty(&hidg->completed_out_req))
+-#define READ_COND_INTOUT (!list_empty(&hidg->completed_out_req))
 -
 -	/* wait for at least one buffer to complete */
--	while (!READ_COND) {
+-	while (!READ_COND_INTOUT) {
 -		spin_unlock_irqrestore(&hidg->read_spinlock, flags);
 -		if (file->f_flags & O_NONBLOCK)
 -			return -EAGAIN;
 -
--		if (wait_event_interruptible(hidg->read_queue, READ_COND))
+-		if (wait_event_interruptible(hidg->read_queue, READ_COND_INTOUT))
 -			return -ERESTARTSYS;
 -
 -		spin_lock_irqsave(&hidg->read_spinlock, flags);
@@ -901,10 +895,69 @@
 -	return count;
 -}
 -
+-#define READ_COND_SSREPORT (hidg->set_report_buf != NULL)
+-
+-static ssize_t f_hidg_ssreport_read(struct file *file, char __user *buffer,
+-				    size_t count, loff_t *ptr)
+-{
+-	struct f_hidg *hidg = file->private_data;
+-	char *tmp_buf = NULL;
+-	unsigned long flags;
+-
+-	if (!count)
+-		return 0;
+-
+-	spin_lock_irqsave(&hidg->read_spinlock, flags);
+-
+-	while (!READ_COND_SSREPORT) {
+-		spin_unlock_irqrestore(&hidg->read_spinlock, flags);
+-		if (file->f_flags & O_NONBLOCK)
+-			return -EAGAIN;
+-
+-		if (wait_event_interruptible(hidg->read_queue, READ_COND_SSREPORT))
+-			return -ERESTARTSYS;
+-
+-		spin_lock_irqsave(&hidg->read_spinlock, flags);
+-	}
+-
+-	count = min_t(unsigned int, count, hidg->set_report_length);
+-	tmp_buf = hidg->set_report_buf;
+-	hidg->set_report_buf = NULL;
+-
+-	spin_unlock_irqrestore(&hidg->read_spinlock, flags);
+-
+-	if (tmp_buf != NULL) {
+-		count -= copy_to_user(buffer, tmp_buf, count);
+-		kfree(tmp_buf);
+-	} else {
+-		count = -ENOMEM;
+-	}
+-
+-	wake_up(&hidg->read_queue);
+-
+-	return count;
++	hid_data.DataLen = 1;
++	hid_data.Data = (uint8)Data;
++	DataReceived = 1;
++	return 1;
+ }
+ 
+-static ssize_t f_hidg_read(struct file *file, char __user *buffer,
+-			   size_t count, loff_t *ptr)
+-{
+-	struct f_hidg *hidg = file->private_data;
+-
+-	if (hidg->use_out_ep)
+-		return f_hidg_intout_read(file, buffer, count, ptr);
+-	else
+-		return f_hidg_ssreport_read(file, buffer, count, ptr);
+-}
++/*-------------------------------------------------------------------------*/
++/*                              Char Device                                */
+ 
  static void f_hidg_req_complete(struct usb_ep *ep, struct usb_request *req)
  {
- 	struct f_hidg *hidg = (struct f_hidg *)ep->driver_data;
-@@ -336,6 +272,7 @@
+@@ -433,6 +315,7 @@
  			    size_t count, loff_t *offp)
  {
  	struct f_hidg *hidg  = file->private_data;
@@ -912,7 +965,7 @@
  	struct usb_request *req;
  	unsigned long flags;
  	ssize_t status = -ENOMEM;
-@@ -343,6 +280,7 @@
+@@ -440,6 +323,7 @@
  	if (!access_ok(buffer, count))
  		return -EFAULT;
  
@@ -920,7 +973,7 @@
  	spin_lock_irqsave(&hidg->write_spinlock, flags);
  
  	if (!hidg->req) {
-@@ -357,10 +295,20 @@
+@@ -454,10 +338,20 @@
  		spin_unlock_irqrestore(&hidg->write_spinlock, flags);
  		if (file->f_flags & O_NONBLOCK)
  			return -EAGAIN;
@@ -942,7 +995,7 @@
  
  		spin_lock_irqsave(&hidg->write_spinlock, flags);
  	}
-@@ -428,6 +376,95 @@
+@@ -525,6 +419,95 @@
  	return status;
  }
  
@@ -1038,7 +1091,23 @@
  static __poll_t f_hidg_poll(struct file *file, poll_table *wait)
  {
  	struct f_hidg	*hidg  = file->private_data;
-@@ -516,7 +553,8 @@
+@@ -536,13 +519,8 @@
+ 	if (WRITE_COND)
+ 		ret |= EPOLLOUT | EPOLLWRNORM;
+ 
+-	if (hidg->use_out_ep) {
+-		if (READ_COND_INTOUT)
+-			ret |= EPOLLIN | EPOLLRDNORM;
+-	} else {
+-		if (READ_COND_SSREPORT)
+-			ret |= EPOLLIN | EPOLLRDNORM;
+-	}
++	if (READ_COND)
++		ret |= EPOLLIN | EPOLLRDNORM;
+ 
+ 	return ret;
+ }
+@@ -650,7 +633,8 @@
  	struct usb_request		*req  = cdev->req;
  	int status = 0;
  	__u16 value, length;
@@ -1048,7 +1117,7 @@
  	value	= __le16_to_cpu(ctrl->wValue);
  	length	= __le16_to_cpu(ctrl->wLength);
  
-@@ -767,9 +805,9 @@
+@@ -908,9 +892,9 @@
  	.open		= f_hidg_open,
  	.release	= f_hidg_release,
  	.write		= f_hidg_write,
@@ -1059,7 +1128,7 @@
  };
  
  static int hidg_bind(struct usb_configuration *c, struct usb_function *f)
-@@ -1115,6 +1153,19 @@
+@@ -1261,6 +1245,19 @@
  	usb_free_all_descriptors(f);
  }
  
@@ -1079,7 +1148,7 @@
  static struct usb_function *hidg_alloc(struct usb_function_instance *fi)
  {
  	struct f_hidg *hidg;
-@@ -1155,6 +1206,8 @@
+@@ -1314,6 +1311,8 @@
  	hidg->func.disable = hidg_disable;
  	hidg->func.setup   = hidg_setup;
  	hidg->func.free_func = hidg_free;

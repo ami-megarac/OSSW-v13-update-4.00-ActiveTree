@@ -1,0 +1,293 @@
+diff -Naur linux_old/drivers/gpu/drm/aspeed/aspeed_gfx_crtc.c linux_new/drivers/gpu/drm/aspeed/aspeed_gfx_crtc.c
+--- linux_old/drivers/gpu/drm/aspeed/aspeed_gfx_crtc.c	2022-09-09 22:16:28.988343885 +0530
++++ linux_new/drivers/gpu/drm/aspeed/aspeed_gfx_crtc.c	2022-09-09 22:20:53.232561232 +0530
+@@ -23,6 +23,30 @@
+ 	return container_of(pipe, struct aspeed_gfx, pipe);
+ }
+ 
++static void aspeed_gfx_set_clock_source(struct aspeed_gfx *priv, int mode_width)
++{
++	regmap_update_bits(priv->scu, 0x300, CLK_SOURCE_MASK, 0x0);
++	regmap_update_bits(priv->scu, 0x308, CLK_DIV_MASK, 0x0);
++
++	switch (mode_width) {
++	case 1024:
++		/* hpll div 16 = 75Mhz */
++		regmap_update_bits(priv->scu, 0x300, CLK_SOURCE_MASK, (BIT(10)|BIT(9)|BIT(8)));
++		regmap_update_bits(priv->scu, 0x308, CLK_DIV_MASK, (BIT(16)|BIT(15)|BIT(13)|BIT(12)));
++		break;
++	case 1280:
++		/* dp div2 = 135Mhz */
++		regmap_update_bits(priv->scu, 0x300, CLK_SOURCE_MASK, BIT(10));
++		regmap_update_bits(priv->scu, 0x308, CLK_DIV_MASK, BIT(12));
++		break;
++	case 800:
++	default:
++		/* usb 40Mhz */
++		regmap_update_bits(priv->scu, 0x300, CLK_SOURCE_MASK, BIT(9));
++		break;
++	}
++}
++
+ static int aspeed_gfx_set_pixel_fmt(struct aspeed_gfx *priv, u32 *bpp)
+ {
+ 	struct drm_crtc *crtc = &priv->pipe.crtc;
+@@ -60,13 +84,18 @@
+ 	u32 ctrl2 = readl(priv->base + CRT_CTRL2);
+ 
+ 	/* SCU2C: set DAC source for display output to Graphics CRT (GFX) */
+-	if(priv->version == GFX_AST2600)
+-	{
+-		regmap_update_bits(priv->scu, 0xc0, BIT(16), BIT(16));
++	/* SCU2C: set DP source for display output to Graphics (GFX) */
++	if(priv->version == GFX_AST2600) {
++		regmap_update_bits(priv->scu, 0xc0, CRT_FROM_SOC, CRT_FROM_SOC);
++		if (priv->dp_support) {
++				regmap_update_bits(priv->scu, 0xc0,  DP_FROM_SOC, DP_FROM_SOC);
++				/* change the dp setting is coming from soc display */
++   				regmap_update_bits(priv->dp, 0xb8, DP_CONTROL_FROM_SOC, DP_CONTROL_FROM_SOC);
++		}
+ 	}
+ 	else
+ 	{
+-		regmap_update_bits(priv->scu, 0x2c, BIT(16), BIT(16));
++		regmap_update_bits(priv->scu, 0x2c, CRT_FROM_SOC, CRT_FROM_SOC);
+ 	}
+ 
+ 	writel(ctrl1 | CRT_CTRL_EN, priv->base + CRT_CTRL1);
+@@ -81,10 +110,36 @@
+ 	writel(ctrl1 & ~CRT_CTRL_EN, priv->base + CRT_CTRL1);
+ 	writel(ctrl2 & ~CRT_CTRL_DAC_EN, priv->base + CRT_CTRL2);
+ 
+-	if(priv->version == GFX_AST2600)
+-		regmap_update_bits(priv->scu, 0xc0, BIT(16), 0);
++	if(priv->version == GFX_AST2600) {
++		regmap_update_bits(priv->scu, 0xc0, CRT_FROM_SOC, 0);
++		if (priv->dp_support)
++		{
++			regmap_update_bits(priv->scu, 0xc0, DP_FROM_SOC, 0);
++			/* change the dp setting is coming from host display */
++			regmap_update_bits(priv->dp, 0xb8, DP_CONTROL_FROM_SOC, 0);
++		}
++	}
+ 	else 
+-		regmap_update_bits(priv->scu, 0x2c, BIT(16), 0);
++		regmap_update_bits(priv->scu, 0x2c, CRT_FROM_SOC, 0);
++}
++
++static void aspeed_gfx_dp_mode_set(struct aspeed_gfx *priv, int mode_width)
++{	
++	switch (mode_width) {
++	case 1024:
++		/* hpll div 16 = 75Mhz */
++		regmap_write(priv->dpmcu, 0xde0, DP_1024);
++		break;
++	case 1280:
++		/* dp div2 = 135Mhz */
++		regmap_write(priv->dpmcu, 0xde0, DP_1280);
++		break;
++	case 800:
++	default:
++		/* usb 40Mhz */
++		regmap_write(priv->dpmcu, 0xde0, DP_800);
++		break;
++	}
+ }
+ 
+ static void aspeed_gfx_crtc_mode_set_nofb(struct aspeed_gfx *priv)
+@@ -96,13 +151,16 @@
+ 	err = aspeed_gfx_set_pixel_fmt(priv, &bpp);
+ 	if (err)
+ 		return;
+-
++	
+ #if 0
+ 	/* TODO: we have only been able to test with the 40MHz USB clock. The
+ 	 * clock is fixed, so we cannot adjust it here. */
+ 	clk_set_rate(priv->pixel_clk, m->crtc_clock * 1000);
+ #endif
+-
++	
++	if (priv->version == GFX_AST2600)
++			aspeed_gfx_set_clock_source(priv, m->hdisplay);
++	
+ 	ctrl1 = readl(priv->base + CRT_CTRL1);
+ 	ctrl1 &= ~(CRT_CTRL_INTERLACED |
+ 			CRT_CTRL_HSYNC_NEGATIVE |
+@@ -156,6 +214,10 @@
+ 	} else {
+ 		writel(CRT_THROD_VAL, priv->base + CRT_THROD);
+ 	}
++	
++	/* set the dp mode index */
++	if (priv->dp_support)
++		aspeed_gfx_dp_mode_set(priv, m->hdisplay);
+ }
+ 
+ static void aspeed_gfx_pipe_enable(struct drm_simple_display_pipe *pipe,
+@@ -187,7 +249,7 @@
+ 	struct drm_framebuffer *fb = pipe->plane.state->fb;
+ 	struct drm_pending_vblank_event *event;
+ 	struct drm_gem_cma_object *gem;
+-
++	
+ 	spin_lock_irq(&crtc->dev->event_lock);
+ 	event = crtc->state->event;
+ 	if (event) {
+diff -Naur linux_old/drivers/gpu/drm/aspeed/aspeed_gfx_drv.c linux_new/drivers/gpu/drm/aspeed/aspeed_gfx_drv.c
+--- linux_old/drivers/gpu/drm/aspeed/aspeed_gfx_drv.c	2022-09-09 22:16:28.988343885 +0530
++++ linux_new/drivers/gpu/drm/aspeed/aspeed_gfx_drv.c	2022-09-09 22:20:53.232561232 +0530
+@@ -74,8 +74,15 @@
+ 	drm->mode_config.min_height = 0;
+ 
+ 	if(priv->version == GFX_AST2600) {
+-		drm->mode_config.max_width = 800;
+-		drm->mode_config.max_height = 600;
++		if(priv->dp_support) {
++			drm->mode_config.max_width = 1280;
++			drm->mode_config.max_height = 1024;
++		} else {
++			drm->mode_config.max_width = 1024;
++			drm->mode_config.max_height = 768;
++		}
++		//drm->mode_config.max_width = 800;
++		//drm->mode_config.max_height = 600;
+ 	} else {
+ 		drm->mode_config.max_width = 800;
+ 		drm->mode_config.max_height = 600;
+@@ -118,6 +125,7 @@
+ 	struct resource *res;
+ 	int ret;
+ 	u32 ctrl;
++	u32 reg = 0;
+ 
+ 	priv = devm_kzalloc(&pdev->dev, sizeof(*priv), GFP_KERNEL);
+ 	if (!priv)
+@@ -179,12 +187,42 @@
+ 		return PTR_ERR(priv->clk);
+ 	}
+ 	clk_prepare_enable(priv->clk);
++	
++	if (priv->version == GFX_AST2600) {
++
++		/* check AST DP is executed or not*/
++		ret = regmap_read(priv->scu, 0x100, &reg);
++		
++		/* The bit[11:9] should be 111b means ASTDP deivce, and the bit[13] should be 1b means the DP MCU
++			is executed successfully. */
++		if ((((reg>>8) & 0x0F) == 0x0E) && ((reg>>13) & 0x01)) { 
++			priv->dp_support = 0x1;
++			
++			pr_info("Dbg: dp_support set as %d\n",priv->dp_support);
++			
++			priv->dp = syscon_regmap_lookup_by_compatible(DP_CP_NAME);
++			if (IS_ERR(priv->dp)) {
++				dev_err(&pdev->dev, "failed to find DP regmap\n");
++				return PTR_ERR(priv->dp);
++			}
++
++			priv->dpmcu = syscon_regmap_lookup_by_compatible(DP_MCU_CP_NAME);
++			if (IS_ERR(priv->dpmcu)) {
++				dev_err(&pdev->dev, "failed to find DP MCU regmap\n");
++				return PTR_ERR(priv->dpmcu);
++			}
++		} else {
++			priv->dp_support = 0x0;
++			priv->dp = NULL;
++			priv->dpmcu = NULL;
++		}
++	}
+ 
+ 	regmap_read(priv->scu,0xc0,&ctrl);
+ 
+ 	/* Sanitize control registers */
+ 	if(ctrl != 0x11000)
+-        {
++    {
+ 		writel(0, priv->base + CRT_CTRL1);
+ 		writel(0, priv->base + CRT_CTRL2);
+ 	}
+@@ -231,6 +269,12 @@
+ 
+ static void aspeed_gfx_unload(struct drm_device *drm)
+ {
++	struct aspeed_gfx *priv = drm->dev_private;
++
++	/* change the dp setting is coming from host side */
++	if (priv->dp_support)
++		regmap_update_bits(priv->dp, 0xb8, DP_CONTROL_FROM_SOC, 0);
++		
+ 	drm_kms_helper_poll_fini(drm);
+ 	drm_mode_config_cleanup(drm);
+ 
+diff -Naur linux_old/drivers/gpu/drm/aspeed/aspeed_gfx.h linux_new/drivers/gpu/drm/aspeed/aspeed_gfx.h
+--- linux_old/drivers/gpu/drm/aspeed/aspeed_gfx.h	2022-09-09 22:16:28.988343885 +0530
++++ linux_new/drivers/gpu/drm/aspeed/aspeed_gfx.h	2022-09-09 22:20:53.232561232 +0530
+@@ -11,6 +11,10 @@
+ 	struct reset_control		*crt_rst;
+ 	struct reset_control		*engine_rst;
+ 	struct regmap			*scu;
++	struct regmap			*dp;
++	struct regmap			*dpmcu;
++	u8						dp_support;
++	int						mode_width;
+ 
+ 	struct drm_simple_display_pipe	pipe;
+ 	struct drm_connector		connector;
+@@ -62,6 +66,22 @@
+ #define OSD_COLOR7		0xF8 /* OSD Color Palette Index 13 & 12 */
+ #define OSD_COLOR8		0xFC /* OSD Color Palette Index 15 & 14 */
+ 
++#define DP_EXECUTE		0x2E /* DP Status */
++#define CLK_SOURCE_MASK	(BIT(10)|BIT(9)|BIT(8)) /* CLK Source Mask SCU300[10:8] */
++#define CLK_DIV_MASK		0x3F000 /* CLK Divided Mask SCU308[17:12]*/
++
++#define DP_800			0x01050020 /* 800 x 600 60Hz */
++#define DP_1024			0x010a0020 /* 1024 x 768 70Hz */
++#define DP_1280			0x010e0020 /* 1280 x 1024 75Hz */
++
++#define DP_CP_NAME		"aspeed,ast2600-displayport"
++#define DP_MCU_CP_NAME	"aspeed,ast2600-displayport-mcu"
++
++#define DP_FROM_SOC		BIT(18)
++#define CRT_FROM_SOC	BIT(16)
++
++#define DP_CONTROL_FROM_SOC	(BIT(24)|BIT(28))
++
+ /* CTRL1 */
+ #define CRT_CTRL_EN			BIT(0)
+ #define CRT_CTRL_HW_CURSOR_EN		BIT(1)
+diff -Naur linux_old/drivers/gpu/drm/aspeed/aspeed_gfx_out.c linux_new/drivers/gpu/drm/aspeed/aspeed_gfx_out.c
+--- linux_old/drivers/gpu/drm/aspeed/aspeed_gfx_out.c	2022-09-09 22:16:28.988343885 +0530
++++ linux_new/drivers/gpu/drm/aspeed/aspeed_gfx_out.c	2022-09-09 22:20:53.232561232 +0530
+@@ -1,6 +1,7 @@
+ // SPDX-License-Identifier: GPL-2.0+
+ // Copyright 2018 IBM Corporation
+ 
++#include <linux/regmap.h>
+ #include <drm/drm_atomic_helper.h>
+ #include <drm/drm_connector.h>
+ #include <drm/drm_crtc_helper.h>
+@@ -10,7 +11,21 @@
+ 
+ static int aspeed_gfx_get_modes(struct drm_connector *connector)
+ {
+-	return drm_add_modes_noedid(connector, 800, 600);
++	struct aspeed_gfx *priv = container_of(connector, struct aspeed_gfx, connector);
++	int mode_count = 0;
++
++	if (priv->version == GFX_AST2600) {
++		mode_count = drm_add_modes_noedid(connector, 1280, 1024);
++		mode_count = drm_add_modes_noedid(connector, 800, 600); //AMI
++		drm_set_preferred_mode(connector, 1024, 768);
++
++	} else {
++
++		mode_count = drm_add_modes_noedid(connector, 800, 600);
++
++	}
++
++	return mode_count;
+ }
+ 
+ static const struct

@@ -1,0 +1,244 @@
+diff -Naur linux_old/drivers/jtag/jtag-aspeed.c linux/drivers/jtag/jtag-aspeed.c
+--- linux_old/drivers/jtag/jtag-aspeed.c	2022-08-12 14:38:12.506169351 +0800
++++ linux/drivers/jtag/jtag-aspeed.c	2022-08-12 15:04:07.170154525 +0800
+@@ -183,7 +183,11 @@
+ 	[ASPEED_JTAG_STAT]     = "ASPEED_JTAG_STAT",
+ };
+ 
++#ifdef	CONFIG_SPX_FEATURE_GLOBAL_INTEL_REMOTE_DBG_SUPPORT
++#define ASPEED_JTAG_NAME		"asd-jtag"
++#else
+ #define ASPEED_JTAG_NAME		"jtag-aspeed"
++#endif
+ 
+ struct aspeed_jtag {
+ 	void __iomem			*reg_base;
+@@ -1397,10 +1401,23 @@
+ 	return 0;
+ }
+ 
++#ifdef CONFIG_SPX_FEATURE_GLOBAL_INTEL_REMOTE_DBG_SUPPORT
++static int reserved_idx = -1;
++struct device_node *reserved_pjtag_np = NULL;
++#endif
++
+ static int aspeed_jtag_init(struct platform_device *pdev,
+ 			    struct aspeed_jtag *aspeed_jtag)
+ {
++#ifdef	CONFIG_SPX_FEATURE_GLOBAL_INTEL_REMOTE_DBG_SUPPORT
++	int idx = -1;
++	struct resource pjtag_res;
++	struct device_node *pjtag_np = NULL;
++#else 
+ 	struct resource *res;
++
++#endif
++
+ #ifdef USE_INTERRUPTS
+ 	int err;
+ #endif
+@@ -1409,11 +1426,30 @@
+ 	memset(aspeed_jtag->pad_data_zero, 0,
+ 	       sizeof(aspeed_jtag->pad_data_zero));
+ 
++#ifdef	CONFIG_SPX_FEATURE_GLOBAL_INTEL_REMOTE_DBG_SUPPORT
++	idx = ++reserved_idx;
++   
++	pjtag_np = of_find_compatible_node(reserved_pjtag_np, NULL, "aspeed,ast2600-jtag");
++	reserved_pjtag_np = pjtag_np;
++	if (of_address_to_resource(pjtag_np, 0, &pjtag_res)) {
++		dev_err(&pdev->dev, "failed to find JTAG resouce\n");
++		return -ENOMEM;
++	}
++    
++	aspeed_jtag->reg_base = ioremap(pjtag_res.start, resource_size(&pjtag_res));
++	if (!aspeed_jtag->reg_base) {
++		dev_err(&pdev->dev, "failed to remap jtag\n");
++		return -ENOMEM;
++	}
++
++#else
+ 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+ 	aspeed_jtag->reg_base = devm_ioremap_resource(aspeed_jtag->dev, res);
+ 	if (IS_ERR(aspeed_jtag->reg_base))
+ 		return -ENOMEM;
+ 
++#endif
++
+ 	aspeed_jtag->pclk = devm_clk_get(aspeed_jtag->dev, NULL);
+ 	if (IS_ERR(aspeed_jtag->pclk)) {
+ 		dev_err(aspeed_jtag->dev, "devm_clk_get failed\n");
+@@ -1433,6 +1469,7 @@
+ 		return -ENOENT;
+ 	}
+ 
++#ifndef	CONFIG_SPX_FEATURE_GLOBAL_INTEL_REMOTE_DBG_SUPPORT
+ 	aspeed_jtag->rst = devm_reset_control_get_shared(&pdev->dev, NULL);
+ 	if (IS_ERR(aspeed_jtag->rst)) {
+ 		dev_err(aspeed_jtag->dev,
+@@ -1440,6 +1477,7 @@
+ 		return PTR_ERR(aspeed_jtag->rst);
+ 	}
+ 	reset_control_deassert(aspeed_jtag->rst);
++#endif
+ 
+ #ifdef USE_INTERRUPTS
+ 	err = devm_request_irq(aspeed_jtag->dev, aspeed_jtag->irq,
+@@ -1464,10 +1502,12 @@
+ 			      struct aspeed_jtag *aspeed_jtag)
+ {
+ 	aspeed_jtag_write(aspeed_jtag, 0, ASPEED_JTAG_ISR);
++#ifndef	CONFIG_SPX_FEATURE_GLOBAL_INTEL_REMOTE_DBG_SUPPORT
+ 	/* Disable clock */
+ 	aspeed_jtag_write(aspeed_jtag, 0, ASPEED_JTAG_CTRL);
+ 	reset_control_assert(aspeed_jtag->rst);
+ 	clk_disable_unprepare(aspeed_jtag->pclk);
++#endif
+ 	return 0;
+ }
+ 
+@@ -1554,7 +1594,11 @@
+ static const struct of_device_id aspeed_jtag_of_match[] = {
+ 	{ .compatible = "aspeed,ast2400-jtag", .data = &ast25xx_functions },
+ 	{ .compatible = "aspeed,ast2500-jtag", .data = &ast25xx_functions },
++#ifdef	CONFIG_SPX_FEATURE_GLOBAL_INTEL_REMOTE_DBG_SUPPORT
++	{ .compatible = "aspeed,asd-jtag", .data = &ast26xx_functions },
++#else
+ 	{ .compatible = "aspeed,ast2600-jtag", .data = &ast26xx_functions },
++#endif
+ 	{}
+ };
+ 
+@@ -1588,7 +1632,12 @@
+ 		goto err_jtag_init;
+ 
+ 	/* Initialize JTAG core structure*/
++#ifdef	CONFIG_SPX_FEATURE_GLOBAL_INTEL_REMOTE_DBG_SUPPORT
++	err = devm_asd_jtag_register(aspeed_jtag->dev, jtag);
++#else
+ 	err = devm_jtag_register(aspeed_jtag->dev, jtag);
++#endif
++
+ 	if (err)
+ 		goto err_jtag_register;
+ 
+diff -Naur linux_old/drivers/jtag/jtag.c linux/drivers/jtag/jtag.c
+--- linux_old/drivers/jtag/jtag.c	2022-08-11 16:14:22.392473000 +0800
++++ linux/drivers/jtag/jtag.c	2022-08-12 16:24:03.825524861 +0800
+@@ -23,6 +23,8 @@
+ 
+ static DEFINE_IDA(jtag_ida);
+ 
++static DEFINE_IDA(ASD_jtag_ida);
++
+ void *jtag_priv(struct jtag *jtag)
+ {
+ 	return jtag->priv;
+@@ -305,6 +307,44 @@
+ 	return err;
+ }
+ 
++static int asd_jtag_register(struct jtag *jtag)
++{
++	struct device *dev = jtag->miscdev.parent;
++	int err;
++	int id;
++
++	if (!dev)
++		return -ENODEV;
++
++	id = ida_simple_get(&ASD_jtag_ida, 0, 0, GFP_KERNEL);
++	if (id < 0)
++		return id;
++
++	jtag->id = id;
++
++	jtag->miscdev.fops =  &jtag_fops;
++	jtag->miscdev.minor = MISC_DYNAMIC_MINOR;
++	jtag->miscdev.name = kasprintf(GFP_KERNEL, "asd_jtag%d", id);
++
++	if (!jtag->miscdev.name) {
++		err = -ENOMEM;
++		goto err_jtag_alloc;
++	}
++
++	err = misc_register(&jtag->miscdev);
++	if (err) {
++		dev_err(jtag->miscdev.parent, "Unable to register device\n");
++		goto err_jtag_name;
++	}
++	return 0;
++
++err_jtag_name:
++	kfree(jtag->miscdev.name);
++err_jtag_alloc:
++	ida_simple_remove(&ASD_jtag_ida, id);
++	return err;
++}
++
+ static void jtag_unregister(struct jtag *jtag)
+ {
+ 	misc_deregister(&jtag->miscdev);
+@@ -312,11 +352,23 @@
+ 	ida_simple_remove(&jtag_ida, jtag->id);
+ }
+ 
++static void asd_jtag_unregister(struct jtag *jtag)
++{
++	misc_deregister(&jtag->miscdev);
++	kfree(jtag->miscdev.name);
++	ida_simple_remove(&ASD_jtag_ida, jtag->id);
++}
++
+ static void devm_jtag_unregister(struct device *dev, void *res)
+ {
+ 	jtag_unregister(*(struct jtag **)res);
+ }
+ 
++static void devm_asd_jtag_unregister(struct device *dev, void *res)
++{
++	asd_jtag_unregister(*(struct jtag **)res);
++}
++
+ int devm_jtag_register(struct device *dev, struct jtag *jtag)
+ {
+ 	struct jtag **ptr;
+@@ -338,6 +390,27 @@
+ }
+ EXPORT_SYMBOL_GPL(devm_jtag_register);
+ 
++int devm_asd_jtag_register(struct device *dev, struct jtag *jtag)
++{
++	struct jtag **ptr;
++	int ret;
++
++	ptr = devres_alloc(devm_asd_jtag_unregister, sizeof(struct jtag *),
++			   GFP_KERNEL);
++	if (!ptr)
++		return -ENOMEM;
++
++	ret = asd_jtag_register(jtag);
++	if (!ret) {
++		*ptr = jtag;
++		devres_add(dev, ptr);
++	} else {
++		devres_free(ptr);
++	}
++	return ret;
++}
++EXPORT_SYMBOL_GPL(devm_asd_jtag_register);
++
+ static void __exit jtag_exit(void)
+ {
+ 	ida_destroy(&jtag_ida);
+diff -Naur linux_old/include/linux/jtag.h linux/include/linux/jtag.h
+--- linux_old/include/linux/jtag.h	2022-08-12 10:00:30.178966379 +0800
++++ linux/include/linux/jtag.h	2022-08-12 15:05:24.126153791 +0800
+@@ -43,6 +43,7 @@
+ 
+ void *jtag_priv(struct jtag *jtag);
+ int devm_jtag_register(struct device *dev, struct jtag *jtag);
++int devm_asd_jtag_register(struct device *dev, struct jtag *jtag);
+ struct jtag *jtag_alloc(struct device *host, size_t priv_size,
+ 			const struct jtag_ops *ops);
+ void jtag_free(struct jtag *jtag);

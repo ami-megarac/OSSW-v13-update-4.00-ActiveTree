@@ -1,0 +1,82 @@
+diff -Naur linux_old/drivers/gpu/drm/aspeed/aspeed_gfx_drv.c linux_new/drivers/gpu/drm/aspeed/aspeed_gfx_drv.c
+--- linux_old/drivers/gpu/drm/aspeed/aspeed_gfx_drv.c	2022-12-20 10:27:57.614722290 +0530
++++ linux_new/drivers/gpu/drm/aspeed/aspeed_gfx_drv.c	2022-12-23 13:09:55.658818219 +0530
+@@ -64,6 +64,19 @@
+ 	.atomic_commit		= drm_atomic_helper_commit,
+ };
+ 
++static int isKthBitSet(unsigned long n, int k)
++{
++    if (n & (1 << (k)))
++    {
++        return 1;
++    }
++    else
++    {
++        return 0;
++    }
++    return 0;
++}
++
+ static void aspeed_gfx_setup_mode_config(struct drm_device *drm)
+ {
+ 	struct aspeed_gfx *priv = drm->dev_private;
+@@ -75,8 +88,8 @@
+ 
+ 	if(priv->version == GFX_AST2600) {
+ 		if(priv->dp_support) {
+-			drm->mode_config.max_width = 1280;
+-			drm->mode_config.max_height = 1024;
++			drm->mode_config.max_width = 1024;
++			drm->mode_config.max_height = 768;
+ 		} else {
+ 			drm->mode_config.max_width = 1024;
+ 			drm->mode_config.max_height = 768;
+@@ -217,22 +230,43 @@
+ 			priv->dpmcu = NULL;
+ 		}
+ 	}
++	
++	aspeed_gfx_setup_mode_config(drm);
+ 
+ 	regmap_read(priv->scu,0xc0,&ctrl);
+ 
+ 	/* Sanitize control registers */
+-	if(ctrl != 0x11000)
+-    {
++	if(isKthBitSet(ctrl,16) != 1 && isKthBitSet(ctrl,18) != 1)
++    	{
+ 		writel(0, priv->base + CRT_CTRL1);
+ 		writel(0, priv->base + CRT_CTRL2);
+ 	}
+ 	else
+ 	{
++		regmap_update_bits(priv->scu, 0x300, CLK_SOURCE_MASK, 0x0);
++        	regmap_update_bits(priv->scu, 0x308, CLK_DIV_MASK, 0x0);
++
++        	switch (drm->mode_config.max_width) {
++        	case 1024:
++                	/* hpll div 16 = 75Mhz */
++                	regmap_update_bits(priv->scu, 0x300, CLK_SOURCE_MASK, (BIT(10)|BIT(9)|BIT(8)));
++                	regmap_update_bits(priv->scu, 0x308, CLK_DIV_MASK, (BIT(16)|BIT(15)|BIT(13)|BIT(12)));
++                	break;
++        	case 1280:
++                	/* dp div2 = 135Mhz */
++                	regmap_update_bits(priv->scu, 0x300, CLK_SOURCE_MASK, BIT(10));
++                	regmap_update_bits(priv->scu, 0x308, CLK_DIV_MASK, BIT(12));
++                	break;
++        	case 800:
++        	default:
++                	/* usb 40Mhz */
++                	regmap_update_bits(priv->scu, 0x300, CLK_SOURCE_MASK, BIT(9));
++                	break;
++        	}
++
+ 		printk("FrameBuffer is enabled.Skipping Sanitize control registers... \n");
+ 	}
+ 
+-	aspeed_gfx_setup_mode_config(drm);
+-
+ 	ret = drm_vblank_init(drm, 1);
+ 	if (ret < 0) {
+ 		dev_err(drm->dev, "Failed to initialise vblank\n");

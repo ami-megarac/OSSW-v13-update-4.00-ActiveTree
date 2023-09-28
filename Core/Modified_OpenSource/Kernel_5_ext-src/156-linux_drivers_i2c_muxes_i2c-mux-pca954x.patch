@@ -38,7 +38,7 @@
 +	int i, switchMask = 0;
 +	struct ctrl_sw_chandata *sw_chandata = NULL;
 +
-+	for ( i = 0; i < PCA954X_MAX_NCHANS;  i++ )
++	for ( i = 0; i < ((struct pca954x *)i2c_mux_priv(muxc))->chip->nchans;  i++ )
 +	{
 +		sw_chandata = muxc->adapter[i]->dev.platform_data;
 +		if(sw_chandata != NULL)

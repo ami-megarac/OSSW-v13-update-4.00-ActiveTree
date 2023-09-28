@@ -282,8 +282,8 @@
  	{ },
  };
  
---- linux-5.4.124/drivers/soc/aspeed/aspeed-lpc-snoop.c	2021-09-30 10:10:32.042370610 +0800
-+++ linux-5.4.124-new/drivers/soc/aspeed/aspeed-lpc-snoop.c	2021-10-06 14:16:19.471873428 +0800
+--- linux-5.4.210/drivers/soc/aspeed/aspeed-lpc-snoop.c	2022-08-11 16:27:53.000000000 +0530
++++ linux-5.4.210-new/drivers/soc/aspeed/aspeed-lpc-snoop.c	2023-08-02 21:23:31.301013614 +0530
 @@ -23,35 +23,51 @@
  #include <linux/platform_device.h>
  #include <linux/poll.h>
@@ -361,77 +361,53 @@
  };
  
  static struct aspeed_lpc_snoop_channel *snoop_file_to_chan(struct file *file)
-@@ -120,14 +140,64 @@
- /* Save a byte to a FIFO and discard the oldest byte if FIFO is full */
- static void put_fifo_with_discard(struct aspeed_lpc_snoop_channel *chan, u8 val)
- {
--	if (!kfifo_initialized(&chan->fifo))
--		return;
--	if (kfifo_is_full(&chan->fifo))
--		kfifo_skip(&chan->fifo);
--	kfifo_put(&chan->fifo, val);
-+	struct kfifo *fifo = &chan->fifo;
-+	memcpy (fifo->kfifo.data+fifo->kfifo.in,(void *)&val,1);
-+
-+	fifo->kfifo.in = (fifo->kfifo.in + 1) % 2048;
-+
-+	if ( fifo->kfifo.mask == (2048-1))
-+	{
-+		fifo->kfifo.mask++;
-+		fifo->kfifo.out = (fifo->kfifo.out + 1) % 2048;
-+	}
-+	else if ( fifo->kfifo.mask == 2048)
-+		fifo->kfifo.out = (fifo->kfifo.out + 1) % 2048;
-+	else
-+		fifo->kfifo.mask++;
-+
+@@ -128,6 +148,45 @@
  	wake_up_interruptible(&chan->wq);
  }
  
-+static void
-+snoop_kfifo_get (struct kfifo *fifo, unsigned char *buffer, unsigned int length)
-+{
-+       unsigned int l;
-+       if ( fifo->kfifo.in < fifo->kfifo.out )
-+       {
-+               l = fifo->kfifo.mask - fifo->kfifo.out;
-+               memcpy ( buffer, fifo->kfifo.data + (fifo->kfifo.out - 1)%2048 , l+1 );
-+               memcpy ( &buffer[l+1], fifo->kfifo.data, fifo->kfifo.out-1 );
-+       }
-+       else
-+               memcpy ( buffer, fifo->kfifo.data + fifo->kfifo.out, fifo->kfifo.in - fifo->kfifo.out );
-+}
-+
 +static irqreturn_t aspeed_lpc_snoop_reset_irq(int irq, void *arg)
 +{
 +	struct aspeed_lpc_snoop *lpc_snoop = arg;
 +	u32 reg = 0;
-+	unsigned int size = 0;
-+	
++	unsigned int size = 0, ret = 0;
++	unsigned char* databuf = NULL;
++
 +	if (regmap_read(lpc_snoop->regmap, HICR2, &reg))
 +	{
 +		return IRQ_NONE;
 +	}
-+	
-+	if (reg & HICR2_LRST) 
++
++	if (reg & HICR2_LRST)
 +	{
-+		size = lpc_snoop->chan[0].fifo.kfifo.mask;
-+		snoop_kfifo_get( &lpc_snoop->chan[0].fifo, (unsigned char *)lpc_snoop->chan[0].previous_fifo.kfifo.data, size);
-+		lpc_snoop->chan[0].previous_fifo.kfifo.mask = size;
-+		lpc_snoop->chan[0].previous_fifo.kfifo.in = size;
-+		lpc_snoop->chan[0].previous_fifo.kfifo.out = 0;
-+		lpc_snoop->chan[0].fifo.kfifo.mask = 0;
-+		lpc_snoop->chan[0].fifo.kfifo.in = 0;
-+		lpc_snoop->chan[0].fifo.kfifo.out = 0;
-+	}
-+	
-+	return IRQ_HANDLED;
++		databuf = kmalloc(SNOOP_FIFO_SIZE,GFP_KERNEL);
++		if (!databuf)
++		{
++			printk("ast_snoop_ioctl - failed in memory allocation!!\n");
++			return -ENOMEM;
++		}
++
++		kfifo_reset(&lpc_snoop->chan[0].previous_fifo);
++
++		size = kfifo_len(&lpc_snoop->chan[0].fifo);
++		ret = kfifo_out(&lpc_snoop->chan[0].fifo, databuf, size);
++		if (ret != size)
++		{
++			printk("Warning: aspeed_lpc_snoop_reset_irq - Incorrect length of data read !!\n");
++		}
++
++		ret = kfifo_in(&lpc_snoop->chan[0].previous_fifo, databuf, ret);
++
++		if (!databuf)
++			kfree(databuf);
++    }
++
++    return IRQ_HANDLED;
 +}
 +
  static irqreturn_t aspeed_lpc_snoop_irq(int irq, void *arg)
  {
  	struct aspeed_lpc_snoop *lpc_snoop = arg;
-@@ -168,7 +238,7 @@
+@@ -168,7 +227,7 @@
  	int rc;
  
  	lpc_snoop->irq = platform_get_irq(pdev, 0);
@@ -440,25 +416,21 @@
  		return -ENODEV;
  
  	rc = devm_request_irq(dev, lpc_snoop->irq,
-@@ -198,7 +268,16 @@
- 			 SNOOP_FIFO_SIZE, GFP_KERNEL);
+@@ -199,6 +258,13 @@
  	if (rc)
  		return rc;
--
-+	
+ 
 +	rc = kfifo_alloc(&lpc_snoop->chan[channel].previous_fifo, SNOOP_FIFO_SIZE, GFP_KERNEL);
 +	if (rc)
 +	{
 +		kfifo_free(&lpc_snoop->chan[channel].fifo);
 +		return rc;
 +	}
-+	
-+	lpc_snoop->chan[channel].previous_fifo.kfifo.mask = 0;
-+	lpc_snoop->chan[channel].fifo.kfifo.mask = 0;
++
  	lpc_snoop->chan[channel].miscdev.minor = MISC_DYNAMIC_MINOR;
  	lpc_snoop->chan[channel].miscdev.name =
  		devm_kasprintf(dev, GFP_KERNEL, "%s%d", DEVICE_NAME, channel);
-@@ -254,10 +333,96 @@
+@@ -254,10 +320,106 @@
  		return;
  	}
  
@@ -475,73 +447,83 @@
 +static long ast_snoop_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 +{
 +
-+       int ret = 0;
-+       struct aspeed_lpc_snoop *ast_snoop = file_lpc_snoop(file);
-+       unsigned char* buf = (unsigned char*) arg;
-+       unsigned char* databuf = NULL;
-+       unsigned int size = 0,avail=0;
++	int ret = 0;
++	struct aspeed_lpc_snoop *ast_snoop = file_lpc_snoop(file);
++	unsigned char* buf = (unsigned char*) arg;
++	unsigned char* databuf = NULL;
++	unsigned int size = 0,avail=0;
 +
-+       databuf = kmalloc(SNOOP_FIFO_SIZE,GFP_KERNEL);
-+       if (!databuf)
-+       {
-+	       return -ENOMEM;
-+       }
++	databuf = kmalloc(SNOOP_FIFO_SIZE,GFP_KERNEL);
++	if (!databuf)
++	{
++		printk("ast_snoop_ioctl - failed in memory allocation!!\n");
++		return -ENOMEM;
++	}
 +
-+       switch(cmd)
-+       {
-+               case READ_PREVIOUS_CODES: 
-+                       size =kfifo_len(&ast_snoop->chan[0].previous_fifo);
-+                       avail = kfifo_avail(&ast_snoop->chan[0].previous_fifo);
-+                       snoop_kfifo_get(&ast_snoop->chan[0].previous_fifo,databuf, size);
-+                       if ((ret = copy_to_user( (void*) (buf), (void*) databuf, size )) != 0)
-+                       {
-+                               printk("READ_PREVIOUS_CODES: Error copying data to user \n");
-+                               kfree(databuf);
-+                               return ret;
-+                       }
-+                       break;
-+               case READ_CURRENT_CODES:
-+                       size =kfifo_len(&ast_snoop->chan[0].fifo);
-+                       avail = kfifo_avail(&ast_snoop->chan[0].fifo);
-+//                     printk("size - %u\n avail - %u\n",size,avail);
-+                       snoop_kfifo_get(&ast_snoop->chan[0].fifo,databuf, size);
-+                       if ((ret = copy_to_user( (void*) (buf), (void*) databuf, size )) != 0)
-+                       {
-+                               printk("READ_CURRENT_CODES: Error copying data to user \n");
-+			       kfree(databuf);
-+                               return ret;
-+                       }
-+                       break;
++	switch(cmd)
++	{
++		case READ_PREVIOUS_CODES:
++			size = kfifo_len(&ast_snoop->chan[0].previous_fifo);
++			avail = kfifo_avail(&ast_snoop->chan[0].previous_fifo);
++			ret = kfifo_out_peek(&ast_snoop->chan[0].previous_fifo, databuf, size);
++			if (ret != size)
++			{
++				printk("Warning: READ_PREVIOUS_CODES: Incorrect length of data read!! \n");
++			}
++			if ((ret = copy_to_user( (void*) (buf), (void*) databuf, size )) != 0)
++			{
++				printk("READ_PREVIOUS_CODES: Error copying data to user \n");
++				kfree(databuf);
++				return ret;
++			}
++			break;
 +
-+               default:
-+                       printk("unrecognized IOCTL call\n");
-+		       kfree(databuf);
-+                       return -1;
-+                       break;
++		case READ_CURRENT_CODES:
++			size = kfifo_len(&ast_snoop->chan[0].fifo);
++			avail = kfifo_avail(&ast_snoop->chan[0].fifo);
++			//printk("size - %u (0x%0x)  avail - %u (0x%0x) \n",size,size,avail,avail);
++			ret = kfifo_out_peek(&ast_snoop->chan[0].fifo, databuf, size);
++			if (ret != size)
++			{
++				printk("Warning: READ_CURRENT_CODES: Incorrect length of data read!! \n");
++			}
++			if ((ret = copy_to_user( (void*) (buf), (void*) databuf, size )) != 0)
++			{
++				printk("READ_CURRENT_CODES: Error copying data to user \n");
++				kfree(databuf);
++				return ret;
++			}
++			break;
++
++		default:
++			printk("unrecognized IOCTL call\n");
++			kfree(databuf);
++			return -1;
++			break;
 +
 +       }
 +
 +	kfree(databuf);
-+       return size;
++	return size;
 +}
 +
 +static int ast_snoop_release(struct inode *inode, struct file *file)
 +{
 +
-+        atomic_dec(&open_count);
-+        return 0;
++	atomic_dec(&open_count);
++	return 0;
 +
 +}
 +
 +static int ast_snoop_open(struct inode *inode, struct file *file)
 +{
 +
-+        if (atomic_inc_return(&open_count) == 1) {
-+                return 0;
-+        }
++	if (atomic_inc_return(&open_count) == 1) {
++		return 0;
++	}
 +
-+        atomic_dec(&open_count);
-+        return -EBUSY;
++	atomic_dec(&open_count);
++	return -EBUSY;
 +
 +}
 +
@@ -555,7 +537,7 @@
  static int aspeed_lpc_snoop_probe(struct platform_device *pdev)
  {
  	struct aspeed_lpc_snoop *lpc_snoop;
-@@ -285,42 +450,48 @@
+@@ -285,42 +447,48 @@
  		dev_err(dev, "no snoop ports configured\n");
  		return -ENODEV;
  	}
@@ -578,8 +560,9 @@
 +	rc = misc_register(&lpc_snoop->miscdev);
  	if (rc) {
 -		dev_err(dev, "couldn't enable clock\n");
+-		return rc;
 +		dev_err(dev, "Unable to register misc device\n");
- 		return rc;
++	return rc;
  	}
  
 -	rc = aspeed_lpc_snoop_config_irq(lpc_snoop, pdev);
@@ -616,7 +599,7 @@
 +	{
 +		regmap_update_bits(lpc_snoop->regmap, HICR4, HICR4_CLR_INTLR, HICR4_CLR_INTLR);
 +		rc = devm_request_irq(&pdev->dev, lpc_snoop->gpio_irq, aspeed_lpc_snoop_reset_irq, IRQF_SHARED, DEVICE_NAME, lpc_snoop);
-+		if (rc) 
++		if (rc)
 +		{
 +			printk(" snoop unable to request GPIO IRQ %d\n", lpc_snoop->gpio_irq);
 +		}
@@ -624,7 +607,7 @@
  
  	return rc;
  }
-@@ -333,8 +504,6 @@
+@@ -333,8 +501,6 @@
  	aspeed_lpc_disable_snoop(lpc_snoop, 0);
  	aspeed_lpc_disable_snoop(lpc_snoop, 1);
  
@@ -633,15 +616,16 @@
  	return 0;
  }
  
-@@ -351,6 +520,8 @@
+@@ -350,6 +516,8 @@
+ 	{ .compatible = "aspeed,ast2400-lpc-snoop",
  	  .data = &ast2400_model_data },
  	{ .compatible = "aspeed,ast2500-lpc-snoop",
- 	  .data = &ast2500_model_data },
++		.data = &ast2500_model_data },
 +	{ .compatible = "aspeed,ast2600-lpc-snoop",
-+	  .data = &ast2500_model_data },
+ 	  .data = &ast2500_model_data },
  	{ },
  };
- 
+
 --- linux-5.4.124/drivers/soc/aspeed/Kconfig	2021-09-30 10:10:32.042370610 +0800
 +++ linux-5.4.124-new/drivers/soc/aspeed/Kconfig	2021-10-04 13:46:36.382908043 +0800
 @@ -5,6 +5,30 @@

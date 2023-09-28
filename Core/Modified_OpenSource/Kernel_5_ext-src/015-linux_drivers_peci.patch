@@ -48,7 +48,7 @@
 diff -ruNa linux/drivers/peci/busses/peci-aspeed.c linux_n/drivers/peci/busses/peci-aspeed.c
 --- linux/drivers/peci/busses/peci-aspeed.c	1970-01-01 08:00:00.000000000 +0800
 +++ linux_n/drivers/peci/busses/peci-aspeed.c	2022-07-29 14:23:17.866670000 +0800
-@@ -0,0 +1,649 @@
+@@ -0,0 +1,652 @@
 +// SPDX-License-Identifier: GPL-2.0
 +// Copyright (C) 2012-2017 ASPEED Technology Inc.
 +// Copyright (c) 2018-2019 Intel Corporation
@@ -363,7 +363,10 @@ diff -ruNa linux/drivers/peci/busses/peci-aspeed.c linux_n/drivers/peci/busses/p
 +			ret = -EOPNOTSUPP;
 +			goto err_irqrestore;
 +		} else if (priv->status & ASPEED_PECI_INT_W_FCS_BAD) {
-+			dev_err(priv->dev, "FCS Bad\n");
++			if(msg->addr >= 0x30 & msg->addr <= 0x37 & msg->tx_len == 0)
++				dev_err(priv->dev, "PECI Client Address 0x%x Not support \n",msg->addr);
++			else
++				dev_err(priv->dev, "FCS Bad \n");
 +			ret = -EILSEQ;
 +			goto err_irqrestore;
 +		}
