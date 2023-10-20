@@ -1,0 +1,68 @@
+diff -Naru lighttpd-1.4.64/src/mod_fastcgi.c ws/source/lighttpd_V1_4_64-13.0.0.0.0-src/data/.workspace/lighttpd/src/mod_fastcgi.c
+--- lighttpd-1.4.64/src/mod_fastcgi.c	2022-01-19 23:23:51.000000000 +0530
++++ ws/source/lighttpd_V1_4_64-13.0.0.0.0-src/data/.workspace/lighttpd/src/mod_fastcgi.c	2022-07-13 21:25:57.436957184 +0530
+@@ -16,8 +16,12 @@
+ #include "log.h"
+ #include "request.h"
+ #include "status_counter.h"
+-
++#include "network.h"
++#include <dlfcn.h>
+ #include "compat/fastcgi.h"
++#define ENABLED 0x01
++#define LIB_PROC_MANAGER "/usr/local/lib/libprocmanager.so"
++#define NA_SERVICE_PORT_BYTE 0xFFFFFFFF
+ 
+ #if GW_RESPONDER  != FCGI_RESPONDER
+ #error "mismatched defines: (GW_RESPONDER != FCGI_RESPONDER)"
+@@ -516,6 +520,42 @@
+ }
+ 
+ 
++PROCMANAGE_FUNC(proc_manage) {
++    void *handle  = NULL;
++    int (*ProcMonitorRegister_func)() = NULL;
++    
++    UNUSED(srv);
++    UNUSED(p_d);
++    
++    handle = dlopen (LIB_PROC_MANAGER,RTLD_LAZY);
++    if (handle == NULL) {
++	return HANDLER_ERROR;
++	
++    }
++
++    ProcMonitorRegister_func = dlsym (handle,"ProcMonitorRegister");
++    if (ProcMonitorRegister_func == NULL) {
++	dlclose(handle);
++	return HANDLER_ERROR;
++    
++    }
++    if (g_corefeatures.allow_non_secure_communication == ENABLED) {
++	if(g_serviceconf.SecureAccessPort != NA_SERVICE_PORT_BYTE) {
++	    ProcMonitorRegister_func("/usr/local/sbin/lighttpd", g_serviceconf.NonSecureAccessPort, "lighttpd",Proc_manager_handler,4,"-f","/conf/lighttpd.conf","-m","/usr/local/lib");
++	
++	}
++    
++    }
++
++    if(g_serviceconf.SecureAccessPort != NA_SERVICE_PORT_BYTE) {
++	ProcMonitorRegister_func("/usr/local/sbin/lighttpd", g_serviceconf.SecureAccessPort, "lighttpd",Proc_manager_handler,4,"-f","/conf/lighttpd.conf","-m","/usr/local/lib");
++    
++    }
++    dlclose(handle);
++    return HANDLER_GO_ON;
++
++}
++
+ int mod_fastcgi_plugin_init(plugin *p);
+ int mod_fastcgi_plugin_init(plugin *p) {
+ 	p->version      = LIGHTTPD_VERSION_ID;
+@@ -524,6 +564,7 @@
+ 	p->init         = gw_init;
+ 	p->cleanup      = gw_free;
+ 	p->set_defaults = mod_fastcgi_set_defaults;
++	p->handle_procmanage   = proc_manage;
+ 	p->handle_request_reset    = gw_handle_request_reset;
+ 	p->handle_uri_clean        = fcgi_check_extension_1;
+ 	p->handle_subrequest_start = fcgi_check_extension_2;

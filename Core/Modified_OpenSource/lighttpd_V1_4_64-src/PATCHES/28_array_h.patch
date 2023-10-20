@@ -1,0 +1,10 @@
+--- lighttpd-1.4.64/src/array.h	2022-01-19 23:23:51.000000000 +0530
++++ ws/source/lighttpd_V1_4_64-13.0.0.0.0-src/data/.workspace/lighttpd/src/array.h	2022-09-13 00:01:22.844714637 +0530
+@@ -67,6 +67,7 @@
+ void array_free_data(array *a);
+ 
+ void array_free(array *a);
++array *array_init_array(array *src);
+ 
+ __attribute_hot__
+ void array_reset_data_strings(array *a);

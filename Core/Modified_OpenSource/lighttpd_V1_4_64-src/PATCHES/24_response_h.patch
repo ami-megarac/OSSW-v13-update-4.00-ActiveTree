@@ -1,0 +1,12 @@
+diff -Naru lighttpd-1.4.64/src/response.h ws/source/lighttpd_V1_4_64-13.0.0.0.0-src/data/.workspace/lighttpd/src/response.h
+--- lighttpd-1.4.64/src/response.h	2022-01-19 23:23:51.000000000 +0530
++++ ws/source/lighttpd_V1_4_64-13.0.0.0.0-src/data/.workspace/lighttpd/src/response.h	2022-07-14 17:52:56.407292538 +0530
+@@ -62,7 +62,7 @@
+ int http_response_omit_header(request_st *r, const data_string *ds);
+ 
+ void http_response_write_header(request_st *r);
+-handler_t http_response_handler(request_st *r);
++handler_t http_response_handler(request_st *r,connection* con);
+ 
+ __attribute_cold__
+ void strftime_cache_reset(void);

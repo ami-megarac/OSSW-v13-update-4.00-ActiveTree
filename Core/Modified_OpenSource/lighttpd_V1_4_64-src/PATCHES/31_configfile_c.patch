@@ -1,0 +1,17 @@
+--- lighttpd-1.4.64/src/configfile.c	2022-01-19 23:23:51.000000000 +0530
++++ lighttpd/src/configfile.c	2023-09-14 09:43:01.325053658 +0530
+@@ -275,12 +275,12 @@
+ 			if (0 == strncmp(du->key.ptr, "ssl.", sizeof("ssl.")-1)) {
+ 				/* mod_openssl should be loaded after mod_extforward */
+ 				array_insert_value(srv->srvconf.modules, CONST_STR_LEN("mod_openssl"));
+-				log_error(srv->errh, __FILE__, __LINE__,
++				/*log_error(srv->errh, __FILE__, __LINE__,
+ 				  "Warning: please add \"mod_openssl\" to server.modules list "
+ 				  "in lighttpd.conf.  A future release of lighttpd 1.4.x "
+ 				  "*will not* automatically load mod_openssl and lighttpd "
+ 				  "*will not* use SSL/TLS where your lighttpd.conf contains "
+-				  "ssl.* directives");
++				  "ssl.* directives");*/
+ 				return;
+ 			}
+ 		}

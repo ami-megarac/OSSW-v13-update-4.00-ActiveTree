@@ -1,0 +1,50 @@
+diff -Naru lighttpd-1.4.64/src/buffer.c ws/source/lighttpd_V1_4_64-13.0.0.0.0-src/data/.workspace/lighttpd/src/buffer.c
+--- lighttpd-1.4.64/src/buffer.c	2022-01-19 23:23:51.000000000 +0530
++++ ws/source/lighttpd_V1_4_64-13.0.0.0.0-src/data/.workspace/lighttpd/src/buffer.c	2022-07-14 17:28:48.997288622 +0530
+@@ -21,6 +21,8 @@
+ 	if (NULL == b) return;
+ 	free(b->ptr);
+ 	free(b);
++	if( b != NULL )
++		b = NULL;
+ }
+ 
+ void buffer_free_ptr(buffer *b) {
+@@ -980,3 +982,37 @@
+         if (light_islower(s[i])) s[i] &= 0xdf;
+     }
+ }
++
++int buffer_prepare_append(buffer *b, size_t size) {
++    if (!b) return -1;
++
++    if (0 == b->size) {
++        b->size = size;
++
++        /* always allocate a multiply of BUFFER_PIECE_SIZE */
++        b->size += BUFFER_PIECE_SIZE - (b->size % BUFFER_PIECE_SIZE);
++
++        b->ptr = malloc(b->size);
++        b->used = 0;
++        force_assert(b->ptr);
++    } else if (b->used + size > b->size) {
++        b->size += size;
++
++        /* always allocate a multiply of BUFFER_PIECE_SIZE */
++        b->size += BUFFER_PIECE_SIZE - (b->size % BUFFER_PIECE_SIZE);
++
++        b->ptr = realloc(b->ptr, b->size);
++        force_assert(b->ptr);
++    }
++    return 0;
++}
++int buffer_append_memory(buffer *b, const char *s, size_t s_len) {
++    if (!s || !b) return -1;
++    if (s_len == 0) return 0;
++
++    buffer_prepare_append(b, s_len);
++    memcpy(b->ptr + b->used, s, s_len);
++    b->used += s_len;
++
++    return 0;
++}

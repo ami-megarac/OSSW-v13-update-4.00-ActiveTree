@@ -1,0 +1,679 @@
+--- lighttpd-1.4.64/src/server.c	2022-01-19 23:23:51.000000000 +0530
++++ lighttpd/src/server.c	2023-10-09 19:54:26.131698930 +0530
+@@ -17,15 +17,24 @@
+ #include "network_write.h"  /* network_write_show_handlers() */
+ #include "reqpool.h"        /* request_pool_init() request_pool_free() */
+ #include "response.h"       /* http_response_send_1xx_cb_set() strftime_cache_reset() */
+-
++#include "configfile.h"
++#include <stdio.h>
++#include <sys/syscall.h>
++#include <syslog.h>
++#include <execinfo.h>
++#include <openssl/engine.h>
+ #ifdef HAVE_VERSIONSTAMP_H
+ # include "versionstamp.h"
+ #else
+ # define REPO_VERSION ""
+ #endif
+ 
++#define ENABLE_MANUAL_DEBUG
++
+ #define PACKAGE_DESC PACKAGE_NAME "/" PACKAGE_VERSION REPO_VERSION
+ static const buffer default_server_tag = { CONST_STR_LEN(PACKAGE_DESC)+1, 0 };
++#define CRYPTO_LIB "/lib/engines/libhwcrypto.so"
++#define CRYPTO_ID   "hwcrypto"
+ 
+ #include <sys/types.h>
+ #include <sys/stat.h>
+@@ -101,6 +110,23 @@
+ /* #define USE_ALARM */
+ #endif
+ 
++//TODO:Avoid changing the secure port from here.
++#define NCML_LIB              "/usr/local/lib/libncml.so"
++#define FEATUREDEF_LIB        "/usr/local/lib/libfeaturedefine.so"
++#define LIB_PROC_MANAGER "/usr/local/lib/libprocmanager.so"
++#define NA_SERVICE_PORT_BYTE  0xFFFFFFFF
++#define WEBLIGHT_MAX_SESSIONS 20
++
++SERVICE_CONF_STRUCT g_serviceconf;
++CoreFeatures_T      g_corefeatures;
++CoreMacros_T        g_coremacros;
++
++int IsWebEnabled();
++int InitWebServiceConfig();
++int RetrieveCoreValues();
++int RetrieveCoreMacroValues();
++static void printbacktrace();
++
+ static int oneshot_fd = 0;
+ static int oneshot_fdout = -1;
+ static fdnode *oneshot_fdn = NULL;
+@@ -116,6 +142,7 @@
+ static volatile sig_atomic_t handle_sig_hup = 0;
+ static int idle_limit = 0;
+ 
++
+ #if defined(HAVE_SIGACTION) && defined(SA_SIGINFO)
+ static volatile siginfo_t last_sigterm_info;
+ static volatile siginfo_t last_sighup_info;
+@@ -128,6 +155,7 @@
+ 
+ 	switch (sig) {
+ 	case SIGTERM:
++		Proc_manager_handler(SIGTERM);
+ 		srv_shutdown = 1;
+ 		last_sigterm_info = *si;
+ 		break;
+@@ -160,6 +188,11 @@
+ 	case SIGCHLD:
+ 		handle_sig_child = 1;
+ 		break;
++	case SIGSEGV:
++		//todo: add syslog
++		printf(" Caught SIGSEGV in lighttpd !!!");
++		printbacktrace();
++		exit(-1);
+ 	}
+ }
+ #elif defined(HAVE_SIGNAL) || defined(HAVE_SIGACTION)
+@@ -185,6 +218,11 @@
+ 	case SIGALRM: handle_sig_alarm = 1; break;
+ 	case SIGHUP:  handle_sig_hup = 1; break;
+ 	case SIGCHLD: handle_sig_child = 1; break;
++	case SIGSEGV:
++		syslog(LOG_DEBUG,"Caught SIGSGEV in lighttpd !!!!\n");
++		// Print the backtrace
++		printbacktrace();
++		exit(-1);
+ 	}
+ }
+ #endif
+@@ -264,7 +302,7 @@
+           "warning: clock jumped %lld secs",
+           (long long)((int64_t)new_ts_adj - (int64_t)cur_ts));
+         int delta =                             /*(30 mins default)*/
+-          config_feature_int(srv, "server.clock-jump-restart", 1800);
++          config_feature_int(srv, "server.clock-jump-restart", 0);
+         if (delta && (new_ts_adj > cur_ts
+                       ? new_ts_adj-cur_ts
+                       : cur_ts-new_ts_adj) > delta) {
+@@ -1065,6 +1103,7 @@
+ 	int test_config = 0;
+ 	int i_am_root = 0;
+ 	int o;
++	ENGINE *e=NULL;
+ #ifdef HAVE_FORK
+ 	int num_childs = 0;
+ #endif
+@@ -1081,6 +1120,9 @@
+ 	i_am_root = (0 == getuid());
+ #endif
+ 
++	RetrieveCoreValues();
++	RetrieveCoreMacroValues();
++
+ 	/* initialize globals (including file-scoped static globals) */
+ 	oneshot_fd = 0;
+ 	oneshot_fdout = -1;
+@@ -1223,7 +1265,7 @@
+ 			return -1;
+ 		}
+ 	}
+-
++#ifndef ENABLE_MANUAL_DEBUG
+ 	/* close stdin and stdout, as they are not needed */
+ 	{
+ 		struct stat st;
+@@ -1256,7 +1298,7 @@
+ 		if (devnull != errfd) close(devnull);
+ 	      #endif
+ 	}
+-
++#endif
+ 	http_response_send_1xx_cb_set(NULL, HTTP_VERSION_2);
+ 	if (!config_feature_bool(srv, "server.h2-discard-backend-1xx", 0))
+ 		http_response_send_1xx_cb_set(h2_send_1xx, HTTP_VERSION_2);
+@@ -1378,6 +1420,10 @@
+ 	/* we need root-perms for port < 1024 */
+ 	if (0 != network_init(srv, srv->stdin_fd)) {
+ 		return -1;
++	}else{
++		if (0 != LoadencEngine (e)) {
++			printf ("Failed to load\n");
++		}
+ 	}
+ 	srv->stdin_fd = -1;
+ 
+@@ -1391,6 +1437,7 @@
+ 			if (NULL == (grp = getgrnam(srv->srvconf.groupname->ptr))) {
+ 				log_error(srv->errh, __FILE__, __LINE__,
+ 				  "can't find groupname %s", srv->srvconf.groupname->ptr);
++				UnloadencEngine (e);
+ 				return -1;
+ 			}
+ 		}
+@@ -1399,12 +1446,14 @@
+ 			if (NULL == (pwd = getpwnam(srv->srvconf.username->ptr))) {
+ 				log_error(srv->errh, __FILE__, __LINE__,
+ 				  "can't find username %s", srv->srvconf.username->ptr);
++				UnloadencEngine (e);
+ 				return -1;
+ 			}
+ 
+ 			if (pwd->pw_uid == 0) {
+ 				log_error(srv->errh, __FILE__, __LINE__,
+ 				  "I will not set uid to 0\n");
++				UnloadencEngine (e);
+ 				return -1;
+ 			}
+ 
+@@ -1419,6 +1468,7 @@
+ 			if (grp->gr_gid == 0) {
+ 				log_error(srv->errh, __FILE__, __LINE__,
+ 				  "I will not set gid to 0\n");
++				UnloadencEngine (e);
+ 				return -1;
+ 			}
+ 		}
+@@ -1430,10 +1480,12 @@
+ 		if (NULL != grp) {
+ 			if (-1 == setgid(grp->gr_gid)) {
+ 				log_perror(srv->errh, __FILE__, __LINE__, "setgid()");
++				UnloadencEngine (e);
+ 				return -1;
+ 			}
+ 			if (-1 == setgroups(0, NULL)) {
+ 				log_perror(srv->errh, __FILE__, __LINE__, "setgroups()");
++				UnloadencEngine (e);
+ 				return -1;
+ 			}
+ 			if (srv->srvconf.username) {
+@@ -1447,10 +1499,12 @@
+ 
+ 			if (-1 == chroot(srv->srvconf.changeroot->ptr)) {
+ 				log_perror(srv->errh, __FILE__, __LINE__, "chroot()");
++				UnloadencEngine (e);
+ 				return -1;
+ 			}
+ 			if (-1 == chdir("/")) {
+ 				log_perror(srv->errh, __FILE__, __LINE__, "chdir()");
++				UnloadencEngine (e);
+ 				return -1;
+ 			}
+ 		}
+@@ -1460,6 +1514,7 @@
+ 		if (NULL != pwd) {
+ 			if (-1 == setuid(pwd->pw_uid)) {
+ 				log_perror(srv->errh, __FILE__, __LINE__, "setuid()");
++				UnloadencEngine (e);
+ 				return -1;
+ 			}
+ 		}
+@@ -1517,9 +1572,10 @@
+ # endif
+ 	sigaction(SIGINT,  &act, NULL);
+ 	sigaction(SIGTERM, &act, NULL);
+-	sigaction(SIGHUP,  &act, NULL);
++	// sigaction(SIGHUP,  &act, NULL);
+ 	sigaction(SIGALRM, &act, NULL);
+ 	sigaction(SIGUSR1, &act, NULL);
++	sigaction(SIGSEGV, &act, NULL);
+ 
+ 	/* it should be safe to restart syscalls after SIGCHLD */
+ 	act.sa_flags |= SA_RESTART | SA_NOCLDSTOP;
+@@ -1530,10 +1586,11 @@
+ 	signal(SIGPIPE, SIG_IGN);
+ 	signal(SIGALRM, signal_handler);
+ 	signal(SIGTERM, signal_handler);
+-	signal(SIGHUP,  signal_handler);
++	// signal(SIGHUP,  signal_handler);
+ 	signal(SIGCHLD,  signal_handler);
+ 	signal(SIGINT,  signal_handler);
+ 	signal(SIGUSR1, signal_handler);
++	signal(SIGSEGV, signal_handler);
+ #endif
+ 
+ 
+@@ -1550,6 +1607,7 @@
+ 		if (-1 == write_all(pid_fd, BUF_PTR_LEN(tb))) {
+ 			log_perror(srv->errh, __FILE__, __LINE__, "Couldn't write pid file");
+ 			close(pid_fd);
++			UnloadencEngine (e);
+ 			pid_fd = -1;
+ 			return -1;
+ 		}
+@@ -1562,6 +1620,7 @@
+ 	if (!srv->srvconf.preflight_check) {
+ 		if (-1 == config_log_error_open(srv)) {
+ 			log_error(srv->errh, __FILE__, __LINE__, "Opening errorlog failed. Going down.");
++			UnloadencEngine (e);
+ 			return -1;
+ 		}
+ 		if (!oneshot_fd)
+@@ -1570,10 +1629,12 @@
+ 
+ 	if (HANDLER_GO_ON != plugins_call_set_defaults(srv)) {
+ 		log_error(srv->errh, __FILE__, __LINE__, "Configuration of plugins failed. Going down.");
++		UnloadencEngine (e);
+ 		return -1;
+ 	}
+ 
+ 	if (!config_finalize(srv, &default_server_tag)) {
++		UnloadencEngine (e);
+ 		return -1;
+ 	}
+ 
+@@ -1741,6 +1802,7 @@
+ 	srv->ev = fdevent_init(srv->srvconf.event_handler, &srv->max_fds, &srv->cur_fds, srv->errh);
+ 	if (NULL == srv->ev) {
+ 		log_error(srv->errh, __FILE__, __LINE__, "fdevent_init failed");
++		UnloadencEngine (e);
+ 		return -1;
+ 	}
+ 
+@@ -1775,6 +1837,7 @@
+ 	 *
+ 	 * */
+ 	if (0 != network_register_fdevents(srv)) {
++		UnloadencEngine (e);
+ 		return -1;
+ 	}
+ 
+@@ -1784,6 +1847,7 @@
+ 	if (!stat_cache_init(srv->ev, srv->errh)) {
+ 		log_error(srv->errh, __FILE__, __LINE__,
+ 		  "stat-cache could not be setup, dying.");
++		UnloadencEngine (e);
+ 		return -1;
+ 	}
+ 
+@@ -1797,6 +1861,7 @@
+ 		interval.it_value.tv_usec = 0;
+ 		if (setitimer(ITIMER_REAL, &interval, NULL)) {
+ 			log_perror(srv->errh, __FILE__, __LINE__, "setitimer()");
++			UnloadencEngine (e);
+ 			return -1;
+ 		}
+ 	}
+@@ -1811,13 +1876,19 @@
+ 		}
+ 	}
+ 
++	/*Register with Process Manager and SLP*/
++	 plugins_call_handle_procmanage(srv);
++
+ 	if (0 != server_sockets_set_nb_cloexec(srv)) {
++		UnloadencEngine (e);
+ 		return -1;
+ 	}
+ 
+ 	/* plugin hook for worker_init */
+-	if (HANDLER_GO_ON != plugins_call_worker_init(srv))
++	if (HANDLER_GO_ON != plugins_call_worker_init(srv)) {
++		UnloadencEngine (e);
+ 		return -1;
++	}
+ 
+ 	if (oneshot_fdout > 0) {
+ 		if (server_oneshot_init_pipe(srv, oneshot_fd, oneshot_fdout)) {
+@@ -2106,3 +2177,358 @@
+ 
+     return rc;
+ }
++
++
++
++/*TODO: Remove below functions when port change is handled from conf file*/
++
++/*Check web is enabled/not*/
++int IsWebEnabled()
++{
++	if(g_serviceconf.CurrentState != 0){
++		printf("WEB is enabled and port numbers are NON-SSL:0x%lx SSL:0x%lx\n",g_serviceconf.NonSecureAccessPort, g_serviceconf.SecureAccessPort);
++		return 1;
++	}
++	else {
++		printf("WEB is disabled\n");
++		return 0;
++	}
++	return 0;
++}
++
++
++int RetrieveCoreValues()
++{
++	void *dl_retrievehandle = NULL;
++	int (*dl_retrievefeatures)(CoreFeatures_T *);
++
++	memset(&g_corefeatures,0,sizeof(CoreFeatures_T));
++
++	dl_retrievehandle = dlopen(FEATUREDEF_LIB,RTLD_LAZY);
++	if(dl_retrievehandle == NULL) {
++		printf("Problem in loading library:%s\n",dlerror());
++		return -1;
++	}
++    
++	dl_retrievefeatures = dlsym(dl_retrievehandle,"RetrieveCoreFeatures");
++	if(dl_retrievefeatures == NULL) {
++		printf("No Symbol Found:%s\n",dlerror());
++		dlclose(dl_retrievehandle);
++		return -1;
++	}
++    
++	(*dl_retrievefeatures)(&g_corefeatures);
++
++	dlclose(dl_retrievehandle);
++
++	return 0;
++}
++
++int RetrieveCoreMacroValues()
++{
++	void *dl_retrievehandle = NULL;
++	int (*dl_retrievemacros)(CoreMacros_T *, CoreFeatures_T *);
++
++	memset(&g_coremacros,0,sizeof(CoreMacros_T));
++
++	dl_retrievehandle = dlopen(FEATUREDEF_LIB,RTLD_LAZY);
++	if(dl_retrievehandle == NULL) {
++		printf("Problem in loading library:%s\n",dlerror());
++		return -1;
++	}
++    
++	dl_retrievemacros = dlsym(dl_retrievehandle,"RetrieveCoreMacros");
++	if(dl_retrievemacros == NULL) {
++		printf("No Symbol Found:%s\n",dlerror());
++		dlclose(dl_retrievehandle);
++		return -1;
++	}
++    
++	(*dl_retrievemacros)(&g_coremacros, &g_corefeatures);
++
++	dlclose(dl_retrievehandle);
++
++	return 0;
++}
++
++/*Change the Secure port*/
++int getsecureport(server *srv, buffer *g_port)
++{
++	int i = 0;
++	int port = 0;
++
++	InitWebServiceConfig();
++    if(0 == IsWebEnabled()) {
++           return -1;
++    }
++
++	if (g_corefeatures.allow_non_secure_communication == ENABLED) {
++		if((srv->srvconf.port != g_serviceconf.NonSecureAccessPort) && (g_serviceconf.NonSecureAccessPort != NA_SERVICE_PORT_BYTE)) {
++			srv->srvconf.port = g_serviceconf.NonSecureAccessPort;
++		}
++	}
++
++	if(g_serviceconf.SecureAccessPort != NA_SERVICE_PORT_BYTE) {
++		for (i = 1; i < srv->config_context->used; i++) {
++			data_config *dc = (data_config *)srv->config_context->data[i];
++			size_t j;
++
++ 			/* not our stage */
++			if (COMP_SERVER_SOCKET != dc->comp)
++				continue;
++			if (dc->cond != CONFIG_COND_EQ){
++				log_error(srv->errh, __FILE__, __LINE__, "s", "only == is allowed for $SERVER[\"socket\"].");
++				return -1;
++			}
++
++			/* check if we already know this socket,
++			 * if yes, don't init it */
++			for (j = 0; j < srv->srv_sockets.used; j++){
++				if (buffer_is_equal(srv->srv_sockets.ptr[j]->srv_token, &dc->string)){
++					break;
++				}
++			}
++
++			if ((j == srv->srv_sockets.used) ) {
++				buffer *bport = NULL;
++				char *sap = NULL;
++				bport = buffer_init();
++				buffer_copy_string(bport,dc->string.ptr);
++				sap = strrchr(bport->ptr,':');
++				if(sap != NULL){
++					*(sap++) = '\0';
++					port = strtol(sap,NULL,10);
++					if(port != g_serviceconf.SecureAccessPort)
++					{
++						sprintf(dc->string.ptr+1,"%ld",g_serviceconf.SecureAccessPort);
++						if((strlen(dc->string.ptr)+1) != dc->string.used) {
++							dc->string.used = strlen(dc->string.ptr)+1;
++						}
++						buffer_copy_string(g_port,dc->string.ptr);
++					}
++				}
++				buffer_free(bport);
++			}
++		}
++	}
++	return 0;
++}
++
++
++/*Get the Service configuration*/
++int InitWebServiceConfig()
++{
++	const unsigned int default_nonssl_port = 80;
++	const unsigned int default_ssl_port = 443;
++	const unsigned char default_current_state = 1;
++	const unsigned char default_active_sessions = 0;
++	const char default_interface[] = "eth0";
++	int ret = 0;
++
++	void *dl_servicehandle = NULL;
++	int (*dl_serviceinit)(char *,SERVICE_CONF_STRUCT *);
++	int (*dl_isservicena)(unsigned char *,int);
++	void (*dl_getservicene)(unsigned char *,int, unsigned char *);
++
++	memset(&g_serviceconf,0,sizeof(SERVICE_CONF_STRUCT));
++
++	dl_servicehandle = dlopen(NCML_LIB,RTLD_LAZY);
++	if(dl_servicehandle == NULL) {
++		printf("Problem in loading library:%s\n",dlerror());
++		return -1;
++	}
++
++	dl_serviceinit = dlsym(dl_servicehandle,"init_service_configurations");
++	if(dl_serviceinit == NULL) {
++		printf("No Symbol Found:%s\n",dlerror());
++		dlclose(dl_servicehandle);
++		return -1;
++	}
++	ret = (*dl_serviceinit)(WEB_SERVICE_NAME,&g_serviceconf);
++	/* fail with ncml, assign default values by application itself */
++	if( (ret == ERR_LOAD_DEFCONF) || (ret == ERR_GET_DEFCONF) ||
++		(ret == ERR_GET_CONF) ) {//ERR_SET_CONF doesn't affect service running. 
++		strncpy(g_serviceconf.ServiceName,WEB_SERVICE_NAME,strlen(WEB_SERVICE_NAME));
++		g_serviceconf.CurrentState = default_current_state;
++		strncpy(g_serviceconf.InterfaceName,&default_interface[0],strlen(default_interface));
++		g_serviceconf.SecureAccessPort = default_ssl_port;
++		g_serviceconf.SessionInactivityTimeout = CONFIG_SPX_FEATURE_WEB_SESSION_TIMEOUT;
++		g_serviceconf.MaxAllowSession = WEBLIGHT_MAX_SESSIONS;
++		g_serviceconf.CurrentActiveSession = default_active_sessions;
++		if (g_corefeatures.allow_non_secure_communication == ENABLED) {
++			g_serviceconf.NonSecureAccessPort = default_nonssl_port;
++		}	
++	}
++
++	dl_getservicene = dlsym(dl_servicehandle,"getNotEditableData");
++	if(dl_getservicene == NULL) {
++		printf("No Symbol Found%s\n",dlerror());
++		dlclose(dl_servicehandle);
++		return -1;
++	}
++	dl_isservicena = dlsym(dl_servicehandle,"isNotApplicable");
++	if(dl_isservicena == NULL) {
++		printf("No Symbol Found%s\n",dlerror());
++		dlclose(dl_servicehandle);
++		return -1;
++	}
++	/*Checking for Non Secure Port Value*/
++	if ((*dl_isservicena)((unsigned char *)&(g_serviceconf.NonSecureAccessPort),
++		sizeof(g_serviceconf.NonSecureAccessPort))) {
++	} else {
++		(*dl_getservicene)((unsigned char *)&(g_serviceconf.NonSecureAccessPort),
++		sizeof(g_serviceconf.NonSecureAccessPort), NULL);
++	}
++
++	/*Checking for Secure Port Value*/
++	if ((*dl_isservicena)((unsigned char *)&(g_serviceconf.SecureAccessPort),
++		sizeof(g_serviceconf.SecureAccessPort))) {
++	} else {
++		(*dl_getservicene)((unsigned char *)&(g_serviceconf.SecureAccessPort),
++		sizeof(g_serviceconf.SecureAccessPort), NULL);
++	}
++
++	/*Checking for Inactivity Timeout value*/
++	if ((*dl_isservicena)((unsigned char *)&(g_serviceconf.SessionInactivityTimeout),
++		sizeof(g_serviceconf.SessionInactivityTimeout))) {
++	} else {
++		(*dl_getservicene)((unsigned char *)&(g_serviceconf.SessionInactivityTimeout),
++		sizeof(g_serviceconf.SessionInactivityTimeout), NULL);
++		if (g_serviceconf.SessionInactivityTimeout == 0) {
++			g_serviceconf.SessionInactivityTimeout = CONFIG_SPX_FEATURE_WEB_SESSION_TIMEOUT;
++		}
++	}
++
++	/*Checking for Max Allow Session Value*/
++	if ((*dl_isservicena)((unsigned char *)&(g_serviceconf.MaxAllowSession),
++		sizeof(g_serviceconf.MaxAllowSession))) {
++	} else {
++		(*dl_getservicene)((unsigned char *)&(g_serviceconf.MaxAllowSession),
++		sizeof(g_serviceconf.MaxAllowSession), NULL);
++	}
++
++	/*Checking for Current Active Session Value*/
++	if ((*dl_isservicena)((unsigned char *)&(g_serviceconf.CurrentActiveSession),
++		sizeof(g_serviceconf.CurrentActiveSession))) {
++	} else {
++		(*dl_getservicene)((unsigned char *)&(g_serviceconf.CurrentActiveSession),
++		sizeof(g_serviceconf.CurrentActiveSession), NULL);
++	}
++
++	dlclose(dl_servicehandle);
++
++	return 0;
++}
++
++
++// Prints the backtrace to /var/log/debug.log ,if SIGSEGV is caught
++static void printbacktrace()
++{
++    //     void *bt[32]= {0};
++    //     int i = 0 , bt_size =0;
++    //     char **bt_syms = NULL;
++    //     long tid = syscall(SYS_gettid);
++
++    //     bt_size = backtrace(bt, 32);
++    //     bt_syms = backtrace_symbols(bt, bt_size);
++	
++	// if ( bt_syms) {
++	//         for (i = 1; i < bt_size; i++) {
++    //     	        char buf[100] = {0};
++    //             	snprintf(buf, sizeof(buf), "bt:%ld:%s\n", tid, bt_syms[i]);
++	//                 syslog(LOG_DEBUG, buf);
++    //    	 	}
++	//         free(bt_syms);
++	// }
++	 void *array[10];
++ 	 char **strings;
++ 	 int size, i;
++
++  	size = backtrace (array, 10);
++  	strings = backtrace_symbols (array, size);
++ 	 if (strings != NULL)
++ 	 {
++
++			printf ("Obtained %d stack frames.\n", size);
++			for (i = 0; i < size; i++)
++				printf ("%s\n", strings[i]);
++	 }
++	  free (strings);
++}
++void Proc_manager_handler(int sig)
++{              
++	void       *handle  = NULL;
++	int (*ProcMonitorDeRegister_func)() = NULL;
++ 
++	UNUSED(sig);
++	//printf("##Inside Proc_manager_handler\n");
++	handle = dlopen (LIB_PROC_MANAGER,RTLD_LAZY);
++	if (handle == NULL) {
++		return ;
++	}
++	ProcMonitorDeRegister_func = dlsym (handle,"ProcMonitorDeRegister");
++	if (ProcMonitorDeRegister_func == NULL) {
++		dlclose(handle);
++		return ;
++	}
++ 
++	ProcMonitorDeRegister_func("/usr/local/sbin/lighttpd");
++	unlink("/var/run/lighttpd.pid");
++	dlclose (handle);
++	return ;
++}
++
++//Loding Hardware Encryptioe 
++int LoadencEngine (ENGINE *e)
++{
++
++	if (g_corefeatures.hw_encryption_support == ENABLED)
++	{
++		ENGINE_load_builtin_engines();
++		e = ENGINE_by_id("dynamic");
++		if (e)
++		{
++			if (!ENGINE_ctrl_cmd_string(e, "SO_PATH", CRYPTO_LIB, 0) || !ENGINE_ctrl_cmd_string(e, "ID", CRYPTO_ID, 0) || !ENGINE_ctrl_cmd_string(e, "LOAD", NULL, 0))
++			{
++				printf("###Engine free \n");
++				ENGINE_free(e);
++				e = NULL;
++				return -1;
++			}
++
++			ENGINE_set_default_ciphers(e);
++			ENGINE_set_default_digests(e);
++		}
++	}
++	else
++	{
++	 	UNUSED(e);
++	}
++	return 0;
++}
++
++//Unload the Engine
++int UnloadencEngine (ENGINE *e)
++{
++
++	if (g_corefeatures.hw_encryption_support == ENABLED)
++	{
++		if (NULL != e)
++		{	
++			/* Release the functional reference from ENGINE_init() */
++			ENGINE_finish(e);
++			/* Release the structural reference from ENGINE_by_id() */
++			ENGINE_free(e);
++		}
++	}
++	else
++	{
++	
++	 	UNUSED(e);
++	}
++	return 0;
++}
++
++
++
++

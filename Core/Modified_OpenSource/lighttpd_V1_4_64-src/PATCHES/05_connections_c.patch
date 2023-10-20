@@ -1,0 +1,348 @@
+--- lighttpd-1.4.64/src/connections.c	2022-01-19 23:23:51.000000000 +0530
++++ lighttpd/src/connections.c	2023-10-07 19:23:37.210689896 +0530
+@@ -30,19 +30,23 @@
+ #include "sys-socket.h"
+ 
+ #define HTTP_LINGER_TIMEOUT 5
+-
+-#define connection_set_state(r, n) ((r)->state = (n))
++// #define connection_set_state(r,n) ((r)->state = (n))
+ 
+ __attribute_cold__
+-static void connection_set_state_error(request_st * const r, const request_state_t state) {
++void connection_set_state_error(request_st * const r, const request_state_t state) {
+     connection_set_state(r, state);
+ }
+ 
+ __attribute_cold__
+ static connection *connection_init(server *srv);
+-
++static handler_t connection_handle_read_post_state(request_st * const r);
+ static void connection_reset(connection *con);
+ 
++void connection_set_state(request_st * const r, const request_state_t state)
++{
++    r->state = state;
++}
++
+ static connection *connections_get_new_connection(server *srv) {
+     connection *con;
+     --srv->lim_conns;
+@@ -73,10 +77,11 @@
+     ++srv->lim_conns;
+ }
+ 
+-static void connection_close(connection *con) {
++void connection_close(connection *con) {
+ 	if (con->fd < 0) con->fd = -con->fd;
+-
+-	plugins_call_handle_connection_close(con);
++	if( con->dupped != 1 ) {
++		plugins_call_handle_connection_close(con);
++	}
+ 
+ 	server * const srv = con->srv;
+ 	request_st * const r = &con->request;
+@@ -91,23 +96,25 @@
+ 	fdevent_fdnode_event_del(srv->ev, con->fdn);
+ 	fdevent_unregister(srv->ev, con->fd);
+ 	con->fdn = NULL;
++	if ( con->dupped != 1) {
+ #ifdef __WIN32
+-	if (0 == closesocket(con->fd))
++		if (0 == closesocket(con->fd))
+ #else
+-	if (0 == close(con->fd))
++		if (0 == close(con->fd))
+ #endif
+-		--srv->cur_fds;
+-	else
+-		log_perror(r->conf.errh, __FILE__, __LINE__,
+-		  "(warning) close: %d", con->fd);
+-
++			--srv->cur_fds;
++		else
++			log_perror(r->conf.errh, __FILE__, __LINE__,
++			  "(warning) close: %d", con->fd);
++	}
+ 	if (r->conf.log_state_handling) {
+ 		log_error(r->conf.errh, __FILE__, __LINE__,
+ 		  "connection closed for fd %d", con->fd);
+ 	}
+-	con->fd = -1;
+-
+-	connection_del(srv, con);
++	if( con->dupped != 1) {
++		con->fd = -1;
++	}
++	connection_del(con->srv, con);
+ }
+ 
+ static void connection_read_for_eos_plain(connection * const con) {
+@@ -160,8 +167,8 @@
+ 	++con->srv->con_closed;
+ 
+ 	/* close the connection */
+-	if (con->fd >= 0
+-	    && (con->is_ssl_sock || 0 == shutdown(con->fd, SHUT_WR))) {
++	if ( (con->dupped != 1) 
++		&& (con->fd >= 0) && (con->is_ssl_sock || 0 == shutdown(con->fd, SHUT_WR))) {
+ 		con->close_timeout_ts = log_monotonic_secs;
+ 
+ 		request_st * const r = &con->request;
+@@ -191,8 +198,7 @@
+ 
+ 	if (r->state != CON_STATE_ERROR) ++con->srv->con_written;
+ 
+-	if (r->reqbody_length != r->reqbody_queue.bytes_in
+-	    || r->state == CON_STATE_ERROR) {
++	if (r->reqbody_length != r->reqbody_queue.bytes_in || r->state == CON_STATE_ERROR) {
+ 		/* request body may not have been read completely */
+ 		r->keep_alive = 0;
+ 		/* clean up failed partial write of 1xx intermediate responses*/
+@@ -250,7 +256,10 @@
+ {
+     /*assert(max_bytes > 0);*/
+     max_bytes = connection_write_throttled(con, max_bytes);
+-    if (0 == max_bytes) con->traffic_limit_reached = 1;
++    if (0 == max_bytes) {
++		 con->traffic_limit_reached = 1;
++		 joblist_append(con);
++ 	}
+     return max_bytes;
+ }
+ 
+@@ -507,6 +516,7 @@
+ 	request_init_data(r, con, srv);
+ 	con->write_queue = &r->write_queue;
+ 	con->read_queue = &r->read_queue;
++	con->dupped = 0;
+ 
+ 	/* init plugin-specific per-connection structures */
+ 	con->plugin_ctx = calloc(1, (srv->plugins.used + 1) * sizeof(void *));
+@@ -556,7 +566,11 @@
+ 	r->bytes_read_ckpt = 0;
+ 	r->bytes_written_ckpt = 0;
+ 	con->is_readable = 1;
+-
++	// if the dupped value is reset here, then connection close will have problems.
++	// since we are checking dupped value before closing socket.
++	// dupped value is cleared on con init and con accept.
++	// con->dupped = 0;
++	// con->ssl = 0 // AMI TODO: check whether this is required
+ 	con->bytes_written = 0;
+ 	con->bytes_written_cur_second = 0;
+ 	con->bytes_read = 0;
+@@ -765,12 +779,43 @@
+         return 0;
+     }
+ 
++    if( strstr(hdrs,"JViewer") != NULL || strstr(hdrs,"VMCLI") != NULL )
++    {
++        //add flag to indicate lighttpd to add \r\n0\r\n\r\n at end of response data.
++        con->plugin_connection = 1;
++    }else{
++        con->plugin_connection = 0;
++    }
++    if((strstr(hdrs, "DELETE /api/session") != NULL) && (strstr(hdrs, "User-Agent: VMCLI") != NULL)) {
++        con->dupped = 0;
++        r->keep_alive = 1;
++        r->http_status = 200;
++    }
+     r->rqst_header_len = header_len;
+     if (r->conf.log_request_header)
+         log_error_multiline(r->conf.errh, __FILE__, __LINE__,
+                             hdrs, header_len, "fd:%d rqst: ", con->fd);
+-    http_request_headers_process(r, hdrs, hoff, con->proto_default_port);
++    http_request_headers_process(r, hdrs, hoff, con->proto_default_port, con->dupped);
+     chunkqueue_mark_written(cq, r->rqst_header_len);
++    if (r->state == CON_STATE_READ_CONTINUOUS) {	
++		handler_t handler_r;
++		if (HANDLER_FINISHED != (handler_r = plugins_call_read_continuous(&con->request))) {
++			connection_set_state(r, CON_STATE_READ);
++		}
++		else {
++			r->keep_alive = 0;
++			r->http_status = 200;
++			con->dupped = 1;
++			connection_set_state(r, CON_STATE_CLOSE);
++		}
++		return 0;
++ 	}
++
++#ifdef CONFIG_SPX_FEATURE_WEB_APP_PROXY
++	if (r->state == CON_STATE_READ_CONTINUOUS_WEB_APP_PROXY) {
++		return 0;
++	}
++#endif
+ 
+     if (light_btst(r->rqst_htags, HTTP_HEADER_UPGRADE)
+         && 0 == r->http_status
+@@ -788,6 +833,7 @@
+ 
+ static handler_t connection_handle_fdevent(void * const context, const int revents) {
+     connection * restrict con = context;
++    request_st * const r = &con->request;
+     const int is_ssl_sock = con->is_ssl_sock;
+ 
+     joblist_append(con);
+@@ -805,6 +851,15 @@
+                 con->is_writable = 1;
+         }
+     }
++#ifdef CONFIG_SPX_FEATURE_WEB_APP_PROXY
++	if ( r->state == CON_STATE_READ_CONTINUOUS_WEB_APP_PROXY) {
++		connection_handle_read_state(con);
++	}
++#endif
++
++	if ( r->state == CON_STATE_READ_CONTINUOUS ) {
++		connection_handle_read_state(con);
++	}
+ 
+     return HANDLER_FINISHED;
+ }
+@@ -970,6 +1025,10 @@
+       case CON_STATE_REQUEST_END:    return "req-end";
+       case CON_STATE_RESPONSE_START: return "resp-start";
+       case CON_STATE_RESPONSE_END:   return "resp-end";
++      case CON_STATE_READ_CONTINUOUS: return "read-continuous";
++#ifdef CONFIG_SPX_FEATURE_WEB_APP_PROXY
++	case CON_STATE_READ_CONTINUOUS_WEB_APP_PROXY: return "read-continuous-web-app-proxy";
++#endif
+       default:                       return "(unknown)";
+     }
+ }
+@@ -982,6 +1041,7 @@
+ connection_state_machine_loop (request_st * const r, connection * const con)
+ {
+ 	request_state_t ostate;
++	int read_again = 0;
+ 	do {
+ 		if (r->conf.log_state_handling) {
+ 			log_error(r->conf.errh, __FILE__, __LINE__,
+@@ -1003,6 +1063,12 @@
+ 			connection_set_state(r, CON_STATE_READ);
+ 			__attribute_fallthrough__
+ 		case CON_STATE_READ:
++		case CON_STATE_READ_CONTINUOUS:
++#ifdef CONFIG_SPX_FEATURE_WEB_APP_PROXY
++		case CON_STATE_READ_CONTINUOUS_WEB_APP_PROXY:
++#endif
++		if( read_again )
++			read_again = 0;
+ 			/*(should not be reached by HTTP/2 streams)*/
+ 			if (!connection_handle_read_state(con)) {
+ 				if (r->http_version == HTTP_VERSION_2) {
+@@ -1012,21 +1078,46 @@
+ 				}
+ 				break;
+ 			}
++#ifdef CONFIG_SPX_FEATURE_WEB_APP_PROXY
++			if (r->state == CON_STATE_READ_CONTINUOUS_WEB_APP_PROXY) {
++				plugins_call_read_continuous(&con->request);
++			}
++#endif
+ 			/*connection_set_state(r, CON_STATE_REQUEST_END);*/
+ 			__attribute_fallthrough__
+ 		case CON_STATE_REQUEST_END: /* transient */
+-			connection_set_state(r,
+-			  (0 == r->reqbody_length)
+-			  ? CON_STATE_HANDLE_REQUEST
+-			  : CON_STATE_READ_POST);
++
++            if((con->request.uri.path.ptr != NULL) && (strncmp(con->request.uri.path.ptr, "/cd-server", strlen("/cd-server") ) == 0) && (con->request.http_method == HTTP_METHOD_CONNECT))
++            {
++                con->request.http_method = 0;
++            }
++			else if(con->request.http_method == HTTP_METHOD_CONNECT && (con->plugin_connection == 0))
++			{
++				connection_set_state(r, CON_STATE_READ_CONTINUOUS);
++                read_again = 1;
++                continue;
++			}
++			else if ( r->reqbody_length == 0 )
++            {
++				connection_set_state(r, CON_STATE_HANDLE_REQUEST);
++			}
++			else
++            {
++				connection_set_state(r, CON_STATE_READ_POST);
++			}
+ 			__attribute_fallthrough__
+ 		case CON_STATE_READ_POST:
+ 		case CON_STATE_HANDLE_REQUEST:
+-			switch (http_response_handler(r)) {
++			switch (http_response_handler(r,con)) {
+ 			  case HANDLER_GO_ON:/*CON_STATE_RESPONSE_START occurred;transient*/
+ 			  case HANDLER_FINISHED:
+ 				break;
+ 			  case HANDLER_WAIT_FOR_EVENT:
++#ifdef CONFIG_SPX_FEATURE_WEB_APP_PROXY
++				if (r->state == CON_STATE_READ_CONTINUOUS_WEB_APP_PROXY) {
++					break;
++				}
++#endif
+ 				return;
+ 			  /*case HANDLER_COMEBACK:*//*(not expected)*/
+ 			  /*case HANDLER_ERROR:*/
+@@ -1065,7 +1156,7 @@
+ 			  "unknown state: %d %d", con->fd, r->state);
+ 			break;
+ 		}
+-	} while (ostate != (request_state_t)r->state);
++	} while ( (ostate != (request_state_t)r->state) || read_again );
+ }
+ 
+ 
+@@ -1156,6 +1247,11 @@
+         if (!(r->conf.stream_request_body & FDEVENT_STREAM_REQUEST_POLLRDHUP))
+             n |= FDEVENT_RDHUP;
+         break;
++      case CON_STATE_READ_CONTINUOUS:
++#ifdef CONFIG_SPX_FEATURE_WEB_APP_PROXY
++      case CON_STATE_READ_CONTINUOUS_WEB_APP_PROXY:
++#endif
++        return;
+       case CON_STATE_CLOSE:
+         n = FDEVENT_IN;
+         break;
+@@ -1184,7 +1280,15 @@
+         con->read_idle_ts = log_monotonic_secs;
+     if ((n & FDEVENT_OUT) && !(events & FDEVENT_OUT))
+         con->write_request_ts = log_monotonic_secs;
+-    fdevent_fdnode_event_set(con->srv->ev, con->fdn, n);
++#ifdef CONFIG_SPX_FEATURE_WEB_APP_PROXY
++        if(r->state == CON_STATE_READ_CONTINUOUS_WEB_APP_PROXY)
++	{
++		con->is_writable =0;
++	}else
++#endif	
++	{
++		fdevent_fdnode_event_set(con->srv->ev, con->fdn, n);
++	}
+ }
+ 
+ 
+@@ -1433,8 +1537,10 @@
+                     /* XXX: con->write_request_ts is not per-request, so timeout
+                      * will not occur if other write activity occurs on h2con
+                      * (future: might keep separate timestamp per-request) */
+-                    if (cur_ts - con->write_request_ts
+-                        > r->conf.max_write_idle) {
++                    if ( (cur_ts - con->write_request_ts
++                        > r->conf.max_write_idle)
++                        //AMI TODO: check sol changes
++                        && ( strncmp(con->request.uri.path.ptr, "/sol?", strlen("/sol?") ) !=0) ) {//disallow web socket SOL timeout {
+                         /*(see comment further down about max_write_idle)*/
+                         /* time - out */
+                         if (r->conf.log_timeouts) {
+@@ -1455,7 +1561,7 @@
+             }
+         }
+         else {
+-            if (cur_ts - con->read_idle_ts > con->keep_alive_idle) {
++            if (cur_ts - con->read_idle_ts > con->keep_alive_idle  && ( strncmp(con->request.uri.path.ptr, "/sol?", strlen("/sol?") ) !=0) ) {//disallow web socket SOL timeout {) {
+                 /* time - out */
+                 if (r->conf.log_request_handling) {
+                     log_error(r->conf.errh, __FILE__, __LINE__,

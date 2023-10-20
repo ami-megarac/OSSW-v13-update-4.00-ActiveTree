@@ -1,0 +1,68 @@
+diff -Naru lighttpd-1.4.64/configure.ac ws/source/lighttpd_V1_4_64-13.0.0.0.0-src/data/.workspace/lighttpd/configure.ac
+--- lighttpd-1.4.64/configure.ac	2022-01-19 23:23:51.000000000 +0530
++++ ws/source/lighttpd_V1_4_64-13.0.0.0.0-src/data/.workspace/lighttpd/configure.ac	2022-07-13 21:25:57.392957860 +0530
+@@ -21,7 +21,20 @@
+ 
+ AC_CANONICAL_HOST
+ 
++dnl HOW FUCKING BROKEN IS AUTOMAKE...
++dnl serial-tests is not recognized before 1.12, and required for serial tests with 1.13, sane version checks "impossible"
++dnl if you don't use the default (symlinked) automake on your box, set AUTOMAKE to the path you're using
++m4_define([serial_tests], [
++    m4_esyscmd([case `${AUTOMAKE:-automake} --version | head -n 1` in
++      *1.11.*|*1.10.*|*1.9.*);;
++      *) echo serial-tests;;
++      esac])
++])
++
+ AM_INIT_AUTOMAKE([1.13 -Wall -Wno-portability -Wno-override foreign dist-xz tar-ustar serial-tests silent-rules subdir-objects])
++dnl enable with --enable-silent-rules or make V=0 (needs automake >= 1.11)
++m4_ifdef([AM_SILENT_RULES], [AM_SILENT_RULES])
++
+ 
+ dnl @synopsis TRY_CFLAGS [compiler flags]
+ dnl @summary check whether compiler supports given flags and adds them to CFLAGS
+@@ -61,10 +74,10 @@
+ 
+ dnl Checks for programs.
+ AC_PROG_CC
+-AC_PROG_CC_C99
+ AX_PROG_CC_FOR_BUILD
+ LT_PATH_LD
+ AC_PROG_INSTALL
++AC_PROG_AWK
+ AC_PROG_CPP
+ AC_PROG_MAKE_SET
+ 
+@@ -88,12 +101,14 @@
+ LT_INIT([dlopen disable-static shared])
+ 
+ dnl for solaris
+-CPPFLAGS="${CPPFLAGS} -D_REENTRANT"
++CPPFLAGS="${CPPFLAGS} -D_REENTRANT -D__EXTENSIONS__"
+ 
+ dnl Checks for header files.
+ 
+ dnl checks for sys/wait.h => HAVE_SYS_WAIT_H
++AC_HEADER_STDC
+ AC_HEADER_SYS_WAIT
++
+ AC_CHECK_HEADERS([\
+   getopt.h \
+   inttypes.h \
+@@ -113,11 +128,15 @@
+   sys/un.h \
+   syslog.h \
+   uuid/uuid.h \
++  fcntl.h \
++  arpa/inet.h \
++  unistd.h \
+ ])
+ 
+ dnl Checks for typedefs, structures, and compiler characteristics.
+ AC_C_CONST
+ AC_C_INLINE
++AC_C_CHAR_UNSIGNED
+ AC_TYPE_OFF_T
+ AC_TYPE_PID_T
+ AC_TYPE_SIZE_T

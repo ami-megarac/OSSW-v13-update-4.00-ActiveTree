@@ -1,0 +1,22 @@
+--- lighttpd-1.4.64/src/http-header-glue.c	2022-01-20 01:53:51.000000000 +0800
++++ .workspace/lighttpd/src/http-header-glue.c	2023-10-02 13:45:49.672444468 +0800
+@@ -631,7 +631,7 @@
+ 		if (!r->resp_body_started) {
+ 			/* Send an error if we haven't sent any data yet */
+ 			if (r->http_status < 500 && r->http_status != 400)
+-				r->http_status = 500;
++				r->http_status = 501;
+ 			r->handler_module = NULL;
+ 			break;
+ 		}
+@@ -1112,6 +1112,10 @@
+         hoff[0] = 1; /* number of lines */
+         hoff[1] = 0; /* base offset for all lines */
+         hoff[2] = 0; /* offset from base for 2nd line; init 0 to detect '\n' */
++        /* write END-OF-HEADER */
++        if( r->con->plugin_connection == 1 ) {
++            buffer_append_string(b, "\r\n0\r\n\r\n");
++        }
+         blen = buffer_clen(b);
+         header_len = http_header_parse_hoff(b->ptr, blen, hoff);
+         if ((header_len ? header_len : blen) > MAX_HTTP_RESPONSE_FIELD_SIZE) {

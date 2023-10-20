@@ -1,0 +1,19 @@
+diff -Naru lighttpd-1.4.64/src/fdevent_impl.c ws/source/lighttpd_V1_4_64-13.0.0.0.0-src/data/.workspace/lighttpd/src/fdevent_impl.c
+--- lighttpd-1.4.64/src/fdevent_impl.c	2022-01-19 23:23:51.000000000 +0530
++++ ws/source/lighttpd_V1_4_64-13.0.0.0.0-src/data/.workspace/lighttpd/src/fdevent_impl.c	2022-07-13 21:25:57.428957308 +0530
+@@ -355,7 +355,14 @@
+ static int
+ fdevent_linux_sysepoll_event_del (fdevents *ev, fdnode *fdn)
+ {
+-    return epoll_ctl(ev->epoll_fd, EPOLL_CTL_DEL, fdn->fd, NULL);
++    if ( 0 != epoll_ctl(ev->epoll_fd, EPOLL_CTL_DEL, fdn->fd, NULL) ) {
++	//AMI TODO:"No such file or folder found" error is found repeatively.
++	//Due to above error, lighttpd crashes. So commenting the changes as of now
++        //if(errno != EBADF)
++        //   SEGFAULT();
++        return 0;
++    }
++    return -1;
+ }
+ 
+ static int

@@ -1,0 +1,20 @@
+diff -Naru lighttpd-1.4.64/src/network.h ws/source/lighttpd_V1_4_64-13.0.0.0.0-src/data/.workspace/lighttpd/src/network.h
+--- lighttpd-1.4.64/src/network.h	2022-01-19 23:23:51.000000000 +0530
++++ ws/source/lighttpd_V1_4_64-13.0.0.0.0-src/data/.workspace/lighttpd/src/network.h	2022-07-13 21:25:57.416957491 +0530
+@@ -2,7 +2,16 @@
+ #define _NETWORK_H_
+ #include "first.h"
+ 
++#include <dlfcn.h>
++#include "ncml.h"
++#include "featuredef.h"
++
++extern SERVICE_CONF_STRUCT g_serviceconf;
++extern CoreFeatures_T      g_corefeatures;
++extern CoreMacros_T        g_coremacros;
++
+ #include "base_decls.h"
++void Proc_manager_handler(int sig);
+ 
+ struct server_socket;   /* declaration */
+ 

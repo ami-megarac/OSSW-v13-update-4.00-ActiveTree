@@ -1,0 +1,10 @@
+--- lighttpd-1.4.64/src/gw_backend.h	2022-01-19 23:23:51.000000000 +0530
++++ ws/source/lighttpd_V1_4_64-13.0.0.0.0-src/data/.workspace/lighttpd/src/gw_backend.h	2022-09-13 21:39:24.910365093 +0530
+@@ -367,6 +367,7 @@
+ handler_t gw_handle_subrequest(request_st *r, void *p_d);
+ handler_t gw_handle_trigger(server *srv, void *p_d);
+ handler_t gw_handle_waitpid_cb(server *srv, void *p_d, pid_t pid, int status);
++handler_t gw_handle_joblist(request_st *r, void *p_d);
+ 
+ void gw_set_transparent(gw_handler_ctx *hctx);
+ 

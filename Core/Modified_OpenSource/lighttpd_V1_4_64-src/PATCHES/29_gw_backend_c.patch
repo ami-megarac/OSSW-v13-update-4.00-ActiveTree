@@ -1,0 +1,188 @@
+--- lighttpd-1.4.64/src/gw_backend.c	2022-01-19 23:23:51.000000000 +0530
++++ ws/source/lighttpd_V1_4_64-13.0.0.0.0-src/data/.workspace/lighttpd/src/gw_backend.c	2022-09-13 21:42:06.727049158 +0530
+@@ -36,11 +36,23 @@
+ #include "http_header.h"
+ #include "log.h"
+ #include "sock_addr.h"
++#include "status_counter.h"
+ 
++#ifdef CONFIG_SPX_FEATURE_SPX_REST
++#include "regex.h"
++#include <sys/file.h>
++
++struct map {
++    char url[256];
++    unsigned long size;
++    struct map *next;
++    struct map *prev;
++};
++typedef struct map map;
+ 
+-
+-
+-#include "status_counter.h"
++map *last_map = NULL;
++int uploading = 0;
++#endif
+ 
+ __attribute_noinline__
+ static int * gw_status_get_counter(gw_host *host, gw_proc *proc, const char *tag, size_t tlen) {
+@@ -2262,6 +2274,158 @@
+     return HANDLER_WAIT_FOR_EVENT;
+ }
+ 
++#ifdef CONFIG_SPX_FEATURE_SPX_REST
++/* Read from mapping file and update list of mappings */
++static int update_mapping(server *srv) {
++        FILE *mfile = fopen("/tmp/map", "r");
++        char url[256];
++        int exists = 0;
++        unsigned long size = 0;
++        map *temp;
++
++        if(mfile) {
++                flock(fileno(mfile), LOCK_EX);
++                while (!feof(mfile)) {
++                        exists = 0;
++                        if(fscanf(mfile, "%255s %lu", url, &size) == 2) {
++                                /* Updating size if mapping already exists */
++                                for(temp = last_map; temp != NULL; temp = temp->prev) {
++                                        if(!strcmp(temp->url, url)) {
++                                                temp->size = size;
++                                                exists = 1;
++                                                break;
++                                        }
++                                }
++
++                                /* Creating new mapping */
++                                if(!exists) {
++                                        map *new_map = (map*)malloc(sizeof(map));
++					snprintf(new_map->url,sizeof(new_map->url)-1,"%s", url);
++                                        new_map->size = size;
++                                        new_map->next = new_map->prev = NULL;
++                                        if(last_map != NULL) {
++                                        last_map->next = new_map;
++                                        new_map->prev = last_map;
++                                    }
++                                    last_map = new_map;
++                                }
++                        }
++                        else {
++                                break;
++                        }
++                }
++                /* Overwriting mapping file with empty file */
++                freopen("/tmp/map", "w", mfile);
++
++                flock(fileno(mfile), LOCK_UN);
++                fclose(mfile);
++        }
++        else
++        {
++                log_error(srv->errh, __FILE__, __LINE__, "s", "/tmp/map cannot be opened.");
++                return -1;
++        }
++
++        return 0;
++}
++		
++                           
++static void stop_upload(connection *con, int status)
++{
++		// con->request_content_queue->bytes_in = r->reqbody_length;//con->request.content_length;
++        con->request.read_queue.bytes_in = con->request.reqbody_length;//con->request.content_length;
++        con->request.http_status = status;
++        // con->file_finished = 1;
++        con->request.keep_alive = 0;
++}
++
++/* Handles upload that exceeds the maximum size for a given mapped request URL */
++static void handle_max_upload_size(server *srv, connection *con) {
++        if(con->request.http_status != 412 && /*con->request.content_length*/ con->request.reqbody_length > 0) {
++                regex_t re;
++                regmatch_t match[1];
++                unsigned long size = 0;
++                map *temp;
++
++                if(update_mapping(srv) != -1) {
++                        /* Finding existing mapping for request URL */
++                    for(temp = last_map; temp != NULL; temp = temp->prev) {
++                        regcomp(&re, temp->url, REG_EXTENDED);
++                        int reg_match = regexec(&re, con->request.uri.path.ptr, 1, match, 0);
++                        regfree(&re);
++                        if( reg_match == 0) {
++                                        size = temp->size;
++                                        break;
++                                }
++                        }
++
++                        if(size == 0) {
++                                /* Handling URL that is not mapped */
++                                stop_upload(con, 403);
++                        }
++                        // else if(con->request.content_length > size) {
++                        else if( con->request.reqbody_length > size ) {
++                                /* Handling upload that exceeds maximum size */
++                                stop_upload(con, 412);
++                        }
++                        else {
++                                /* Handling correct upload */
++                                uploading = 1;
++                        }
++                }
++                else {
++                        /* Handling error while updating mapping */
++                        stop_upload(con, 500);
++                }
++        }
++}
++#endif
++
++
++// CONNECTION_FUNC(gw_handle_joblist) {
++handler_t gw_handle_joblist(request_st *r, void *p_d) {
++        gw_plugin_data *p = p_d;
++        gw_handler_ctx *hctx = r->con->plugin_ctx[p->id];
++
++        //AMI TODO: con->request.content_length needs to be set for content_length
++        // int content_length = chunkqueue_length( r->reqbody_length );
++#ifdef CONFIG_SPX_FEATURE_SPX_REST
++        if(r->con->request.http_method == HTTP_METHOD_POST && r->reqbody_length > 4096) {
++                if(!uploading) {
++                        handle_max_upload_size(r->con->srv, r->con);
++                }
++        }
++        if(r->con->request.http_method == HTTP_METHOD_UNSET && uploading == 1) {
++                uploading = 0;
++        }
++#endif
++
++        if (hctx == NULL) return HANDLER_GO_ON;
++
++        if ( hctx->fd != -1) {
++                switch (hctx->state) {
++                case GW_STATE_READ:
++                        // fdevent_event_set(srv->ev, &(hctx->fde_ndx), hctx->fd, FDEVENT_IN);
++                        fdevent_fdnode_event_set(hctx->con->srv->ev, hctx->con->fdn, FDEVENT_IN );
++                        break;
++                case GW_STATE_CONNECT_DELAYED:
++                case GW_STATE_WRITE:
++                case GW_STATE_PREPARE_WRITE:
++                        // fdevent_event_set(srv->ev, &(hctx->fde_ndx), hctx->fd, FDEVENT_OUT);
++                        fdevent_fdnode_event_set(hctx->con->srv->ev, hctx->con->fdn, FDEVENT_IN );
++                        break;
++                case GW_STATE_INIT:
++                        /* at reconnect */
++                        break;
++                default:
++                        log_error(hctx->con->srv->errh, __FILE__, __LINE__, "sd", "unhandled proxy.state.",hctx->state);
++                        break;
++                }
++        }
++
++        return HANDLER_GO_ON;
++}
++
+ 
+ static handler_t gw_authorizer_ok(gw_handler_ctx * const hctx, request_st * const r) {
+     /*

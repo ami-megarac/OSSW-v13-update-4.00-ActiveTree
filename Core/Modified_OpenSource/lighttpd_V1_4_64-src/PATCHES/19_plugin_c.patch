@@ -1,0 +1,111 @@
+--- lighttpd-1.4.64/src/plugin.c	2022-01-19 23:23:51.000000000 +0530
++++ lighttpd/src/plugin.c	2023-09-26 13:57:18.048654884 +0530
+@@ -31,6 +31,7 @@
+ 
+ typedef enum {
+ 	PLUGIN_FUNC_HANDLE_URI_CLEAN,
++	PLUGIN_FUNC_HANDLE_READPOST,    //File upload
+ 	PLUGIN_FUNC_HANDLE_DOCROOT,
+ 	PLUGIN_FUNC_HANDLE_PHYSICAL,
+ 	PLUGIN_FUNC_HANDLE_SUBREQUEST_START,
+@@ -42,14 +43,16 @@
+ 	PLUGIN_FUNC_HANDLE_CONNECTION_ACCEPT,
+ 	PLUGIN_FUNC_HANDLE_CONNECTION_SHUT_WR,
+ 	PLUGIN_FUNC_HANDLE_CONNECTION_CLOSE,
++	PLUGIN_FUNC_HANDLE_JOBLIST,		//File upload
+ 	PLUGIN_FUNC_HANDLE_TRIGGER,
+ 	PLUGIN_FUNC_HANDLE_WAITPID,
+ 	PLUGIN_FUNC_HANDLE_SIGHUP,
++	PLUGIN_FUNC_HANDLE_PROCREG, // register lighttpd with procmanager
+ 	/* PLUGIN_FUNC_INIT, *//* handled here in plugin.c */
+ 	/* PLUGIN_FUNC_CLEANUP, *//* handled here in plugin.c */
+ 	PLUGIN_FUNC_SET_DEFAULTS,
+ 	PLUGIN_FUNC_WORKER_INIT,
+-
++	PLUGIN_FUNC_READ_CONTINUOUS,		// support mod_websocket, mod_singleport
+ 	PLUGIN_FUNC_SIZEOF
+ } plugin_t;
+ 
+@@ -344,7 +347,8 @@
+ PLUGIN_CALL_FN_REQ_DATA(PLUGIN_FUNC_HANDLE_REQUEST_DONE, handle_request_done)
+ PLUGIN_CALL_FN_REQ_DATA(PLUGIN_FUNC_HANDLE_REQUEST_RESET, handle_request_reset)
+ PLUGIN_CALL_FN_REQ_DATA(PLUGIN_FUNC_HANDLE_REQUEST_ENV, handle_request_env)
+-
++PLUGIN_CALL_FN_REQ_DATA(PLUGIN_FUNC_HANDLE_JOBLIST, handle_joblist)
++PLUGIN_CALL_FN_REQ_DATA(PLUGIN_FUNC_READ_CONTINUOUS, read_continuous)
+ /**
+  * plugins that use
+  *
+@@ -370,6 +374,10 @@
+  * - void *p_d (plugin_data *)
+  */
+ 
++handler_t plugins_call_handle_procmanage(server *srv) {
++    return plugins_call_fn_srv_data(srv, PLUGIN_FUNC_HANDLE_PROCREG);
++}
++
+ handler_t plugins_call_set_defaults(server *srv) {
+     return plugins_call_fn_srv_data(srv, PLUGIN_FUNC_SET_DEFAULTS);
+ }
+@@ -398,6 +406,18 @@
+     return rc;
+ }
+ 
++handler_t plugins_call_handle_readpost(server *srv, connection *con) {
++    const uint32_t offset =
++      ((const uint16_t *)srv->plugin_slots)[PLUGIN_FUNC_HANDLE_READPOST];
++    if (0 == offset) return HANDLER_GO_ON;
++    const plugin_fn_data *plfd = (const plugin_fn_data *)
++      (((uintptr_t)srv->plugin_slots) + offset);
++    handler_t rc = HANDLER_GO_ON;
++    while (plfd->fn&&(rc=plfd->fn(srv,con))==HANDLER_GO_ON)
++        ++plfd;
++    return rc;
++}
++
+ static void plugins_call_cleanup(server * const srv) {
+     plugin ** const ps = srv->plugins.ptr;
+     for (uint32_t i = 0; i < srv->plugins.used; ++i) {
+@@ -405,8 +425,10 @@
+         if (NULL == p) continue;
+         if (NULL != p->data) {
+             plugin_data_base *pd = p->data;
+-            if (p->cleanup)
+-                p->cleanup(p->data);
++			if((strncmp(p->name, "openssl", sizeof("openssl") - 1)) != 0) {
++				if (p->cleanup)
++					p->cleanup(p->data);
++			}
+             free(pd->cvlist);
+             free(pd);
+             p->data = NULL;
+@@ -496,6 +518,14 @@
+ 			++offsets[PLUGIN_FUNC_HANDLE_RESPONSE_START];
+ 		if (p->handle_docroot)
+ 			++offsets[PLUGIN_FUNC_HANDLE_DOCROOT];
++		if (p->handle_readpost)
++			++offsets[PLUGIN_FUNC_HANDLE_READPOST];
++		if (p->handle_procmanage)
++			++offsets[PLUGIN_FUNC_HANDLE_PROCREG];
++		if (p->read_continuous)
++			++offsets[PLUGIN_FUNC_READ_CONTINUOUS];
++		if (p->handle_joblist)
++			++offsets[PLUGIN_FUNC_HANDLE_JOBLIST];
+ 		if (p->handle_physical)
+ 			++offsets[PLUGIN_FUNC_HANDLE_PHYSICAL];
+ 		if (p->handle_request_reset)
+@@ -557,6 +587,14 @@
+ 					offsets[PLUGIN_FUNC_HANDLE_RESPONSE_START]);
+ 		plugins_call_init_slot(srv, p->handle_docroot, p->data,
+ 					offsets[PLUGIN_FUNC_HANDLE_DOCROOT]);
++		plugins_call_init_slot(srv, p->read_continuous, p->data,
++					offsets[PLUGIN_FUNC_READ_CONTINUOUS]);
++		plugins_call_init_slot(srv, p->handle_joblist, p->data,
++					offsets[PLUGIN_FUNC_HANDLE_JOBLIST]);
++		plugins_call_init_slot(srv, p->handle_readpost, p->data,
++					offsets[PLUGIN_FUNC_HANDLE_READPOST]);
++		plugins_call_init_slot(srv, p->handle_procmanage, p->data,
++					offsets[PLUGIN_FUNC_HANDLE_PROCREG]);
+ 		plugins_call_init_slot(srv, p->handle_physical, p->data,
+ 					offsets[PLUGIN_FUNC_HANDLE_PHYSICAL]);
+ 		plugins_call_init_slot(srv, p->handle_request_reset, p->data,

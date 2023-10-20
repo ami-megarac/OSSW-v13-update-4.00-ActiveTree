@@ -1,0 +1,11 @@
+diff -Naru lighttpd-1.4.64/src/http_header.h ws/source/lighttpd_V1_4_64-13.0.0.0.0-src/data/.workspace/lighttpd/src/http_header.h
+--- lighttpd-1.4.64/src/http_header.h	2022-01-19 23:23:51.000000000 +0530
++++ ws/source/lighttpd_V1_4_64-13.0.0.0.0-src/data/.workspace/lighttpd/src/http_header.h	2022-07-15 13:43:56.870095579 +0530
+@@ -95,6 +95,7 @@
+  ,HTTP_HEADER_X_FORWARDED_PROTO
+  ,HTTP_HEADER_X_FRAME_OPTIONS
+  ,HTTP_HEADER_X_XSS_PROTECTION
++ ,HTTP_HEADER_X_CLIENT_CERTIFICATE
+ };
+
+ __attribute_pure__

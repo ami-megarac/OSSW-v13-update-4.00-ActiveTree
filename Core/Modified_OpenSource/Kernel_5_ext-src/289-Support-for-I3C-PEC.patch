@@ -1,0 +1,225 @@
+From 70fbe1fed2a337cf568b135618f53638bf54e223 Mon Sep 17 00:00:00 2001
+From: vijayks <vijayks@ami.com>
+Date: Tue, 26 Sep 2023 21:43:22 +0530
+Subject: [PATCH] Support for I3C PEC
+
+Signed-off-by: vijayks <vijayks@ami.com>
+---
+ drivers/i3c/device.c                    | 18 ++++++++++++++++++
+ drivers/i3c/i3c-ibi-mqueue.c            | 16 ++++++++++++++++
+ drivers/i3c/internals.h                 |  1 +
+ drivers/i3c/master.c                    | 23 +++++++++++++++++++++++
+ drivers/i3c/master/ast2600-i3c-master.c |  8 ++++++++
+ include/linux/i3c/device.h              |  4 ++++
+ include/linux/i3c/master.h              |  1 +
+ 7 files changed, 71 insertions(+)
+
+diff --git a/drivers/i3c/device.c b/drivers/i3c/device.c
+index aef66fb6e..ce0574bfb 100644
+--- a/drivers/i3c/device.c
++++ b/drivers/i3c/device.c
+@@ -440,3 +440,21 @@ int i3c_device_getmwl_ccc(struct i3c_device *dev, struct i3c_device_info *info)
+ 	return ret;
+ }
+ EXPORT_SYMBOL_GPL(i3c_device_getmwl_ccc);
++
++/**
++ * i3c_device_control_pec() - enable or disable PEC support in HW
++ *
++ * @dev: I3C device to get the status for
++ * @pec: flag telling whether PEC support shall be enabled or disabled
++ *
++ * Try to enable or disable HW support for PEC (Packet Error Check).
++ * In case no HW support for PEC, software implementation could be used.
++ *
++ * Return: 0 in case of success, -EOPNOTSUPP in case PEC is not supported by HW,
++ *         other negative error codes when PEC enabling failed.
++ */
++int i3c_device_control_pec(struct i3c_device *dev, bool pec)
++{
++       return i3c_dev_control_pec(dev->desc, pec);
++}
++EXPORT_SYMBOL_GPL(i3c_device_control_pec);
+diff --git a/drivers/i3c/i3c-ibi-mqueue.c b/drivers/i3c/i3c-ibi-mqueue.c
+index 935942792..6310d5966 100644
+--- a/drivers/i3c/i3c-ibi-mqueue.c
++++ b/drivers/i3c/i3c-ibi-mqueue.c
+@@ -18,6 +18,7 @@
+ #define MQ_QUEUE_SIZE		4
+ #define MQ_QUEUE_NEXT(x)	(((x) + 1) & (MQ_QUEUE_SIZE - 1))
+ 
++#define IBI_QUEUE_STATUS_PEC_ERR	BIT(30)
+ #define IBI_STATUS_LAST_FRAG	BIT(24)
+ #define PID_MANUF_ID_ASPEED	0x03f6
+ 
+@@ -39,6 +40,11 @@ struct mq_queue {
+ 	struct mq_msg queue[MQ_QUEUE_SIZE];
+ };
+ 
++static u8 mdb_table[] = {
++	0xbf, /* Aspeed BIC */
++	0,
++};
++
+ static void i3c_ibi_mqueue_callback(struct i3c_device *dev,
+ 				    const struct i3c_ibi_payload *payload)
+ {
+@@ -46,6 +52,7 @@ static void i3c_ibi_mqueue_callback(struct i3c_device *dev,
+ 	struct mq_msg *msg = mq->curr;
+ 	u8 *buf = (u8 *)payload->data;
+ 	u32 status;
++	const u8 *mdb;
+ 
+ 	/* first DW is IBI status */
+ 	status = *(u32 *)buf;
+@@ -55,6 +62,15 @@ static void i3c_ibi_mqueue_callback(struct i3c_device *dev,
+ 	memcpy(&msg->buf[msg->len], buf, payload->len - sizeof(status));
+ 	msg->len += payload->len - sizeof(status);
+ 
++	if (status & IBI_QUEUE_STATUS_PEC_ERR) {
++		for (mdb = mdb_table; *mdb != 0; mdb++)
++			if (buf[0] == *mdb)
++				break;
++		if (!(*mdb)) {
++			dev_err(&dev->dev, "ibi crc/pec error: mdb = %x", buf[0]);
++			return;
++		}
++	}
+ 	/* if last fragment, notify and update pointers */
+ 	if (status & IBI_STATUS_LAST_FRAG) {
+ 		/* check pending-read-notification */
+diff --git a/drivers/i3c/internals.h b/drivers/i3c/internals.h
+index 1e3aca20c..d139ea421 100644
+--- a/drivers/i3c/internals.h
++++ b/drivers/i3c/internals.h
+@@ -33,4 +33,5 @@ int i3c_master_setmrl_locked(struct i3c_master_controller *master,
+ int i3c_master_setmwl_locked(struct i3c_master_controller *master,
+ 			     struct i3c_device_info *info, u16 write_len);
+ int i3c_for_each_dev(void *data, int (*fn)(struct device *, void *));
++int i3c_dev_control_pec(struct i3c_dev_desc *dev, bool pec);
+ #endif /* I3C_INTERNAL_H */
+diff --git a/drivers/i3c/master.c b/drivers/i3c/master.c
+index 8ef72041d..30171f349 100644
+--- a/drivers/i3c/master.c
++++ b/drivers/i3c/master.c
+@@ -2075,6 +2075,9 @@ int i3c_master_add_i3c_dev_locked(struct i3c_master_controller *master,
+ 		}
+ 		mutex_unlock(&olddev->ibi_lock);
+ 
++		if (olddev->info.pec != newdev->info.pec)
++			i3c_device_control_pec(newdev->dev, olddev->info.pec);
++
+ 		old_dyn_addr = olddev->info.dyn_addr;
+ 
+ 		i3c_master_detach_i3c_dev(olddev);
+@@ -2985,6 +2988,26 @@ int i3c_for_each_dev(void *data, int (*fn)(struct device *, void *))
+ }
+ EXPORT_SYMBOL_GPL(i3c_for_each_dev);
+ 
++int i3c_dev_control_pec(struct i3c_dev_desc *dev, bool pec)
++{
++	struct i3c_master_controller *master = i3c_dev_get_master(dev);
++
++	if (!master->pec_supported)
++		return -EOPNOTSUPP;
++
++	dev->info.pec = pec;
++
++	/*
++	 * TODO: There are two cases which shall be covered
++	 * 1. Controller doesn't support PEC.
++	 *    In this case we could just fallback to SW implementation.
++	 * 2. Device doesn't support PEC.
++	 *    Then we really can't use PEC - and should error-out.
++	 */
++
++	return 0;
++}
++
+ static int __init i3c_init(void)
+ {
+ 	return bus_register(&i3c_bus_type);
+diff --git a/drivers/i3c/master/ast2600-i3c-master.c b/drivers/i3c/master/ast2600-i3c-master.c
+index 050655ca4..958c3a4ad 100644
+--- a/drivers/i3c/master/ast2600-i3c-master.c
++++ b/drivers/i3c/master/ast2600-i3c-master.c
+@@ -49,6 +49,7 @@ DECLARE_CRC8_TABLE(i3c_crc8_table);
+ 
+ #define HW_CAPABILITY			0x8
+ #define COMMAND_QUEUE_PORT		0xc
++#define COMMAND_PORT_PEC		BIT(31)
+ #define COMMAND_PORT_TOC		BIT(30)
+ #define COMMAND_PORT_READ_TRANSFER	BIT(28)
+ #define COMMAND_PORT_SDAP		BIT(27)
+@@ -1739,6 +1740,9 @@ static int aspeed_i3c_master_ccc_xfers(struct i3c_dev_desc *dev,
+ 		if (i == (i3c_nxfers - 1))
+ 			cmd->cmd_lo |= COMMAND_PORT_TOC;
+ 
++		if (dev->info.pec)
++			cmd->cmd_lo |= COMMAND_PORT_PEC;
++
+ 		dev_dbg(master->dev,
+ 			"%s:cmd_hi=0x%08x cmd_lo=0x%08x tx_len=%d rx_len=%d\n",
+ 			__func__, cmd->cmd_hi, cmd->cmd_lo, cmd->tx_len,
+@@ -1826,6 +1830,9 @@ static int aspeed_i3c_master_priv_xfers(struct i3c_dev_desc *dev,
+ 		if (i == (i3c_nxfers - 1))
+ 			cmd->cmd_lo |= COMMAND_PORT_TOC;
+ 
++		if (dev->info.pec)
++                        cmd->cmd_lo |= COMMAND_PORT_PEC;
++
+ 		dev_dbg(master->dev,
+ 			"%s:cmd_hi=0x%08x cmd_lo=0x%08x tx_len=%d rx_len=%d\n",
+ 			__func__, cmd->cmd_hi, cmd->cmd_lo, cmd->tx_len,
+@@ -2711,6 +2718,7 @@ static int aspeed_i3c_probe(struct platform_device *pdev)
+ 						 master->maxdevs - 1));
+ #endif
+ 	master->dev = &pdev->dev;
++	master->base.pec_supported = true;
+ 	ret = i3c_master_register(&master->base, &pdev->dev,
+ 				  &aspeed_i3c_ops, master->secondary);
+ 	if (ret)
+diff --git a/include/linux/i3c/device.h b/include/linux/i3c/device.h
+index 12193bfa4..0be6fb3fa 100644
+--- a/include/linux/i3c/device.h
++++ b/include/linux/i3c/device.h
+@@ -136,6 +136,8 @@ enum i3c_dcr {
+  * @max_read_turnaround: max read turn-around time in micro-seconds
+  * @max_read_len: max private SDR read length in bytes
+  * @max_write_len: max private SDR write length in bytes
++ * @pec: flag telling whether PEC (Packet Error Check) generation and verification for read
++ *       and write transaction is enabled
+  *
+  * These are all basic information that should be advertised by an I3C device.
+  * Some of them are optional depending on the device type and device
+@@ -157,6 +159,7 @@ struct i3c_device_info {
+ 	u32 max_read_turnaround;
+ 	u16 max_read_len;
+ 	u16 max_write_len;
++	u8 pec;
+ 	__be16 status;
+ };
+ 
+@@ -362,6 +365,7 @@ void i3c_device_free_ibi(struct i3c_device *dev);
+ int i3c_device_enable_ibi(struct i3c_device *dev);
+ int i3c_device_disable_ibi(struct i3c_device *dev);
+ int i3c_device_send_ccc_cmd(struct i3c_device *dev, u8 ccc_id);
++int i3c_device_control_pec(struct i3c_device *dev, bool pec);
+ 
+ int i3c_device_getstatus_ccc(struct i3c_device *dev, struct i3c_device_info *info);
+ int i3c_device_setmrl_ccc(struct i3c_device *dev, struct i3c_device_info *info, u16 read_len,
+diff --git a/include/linux/i3c/master.h b/include/linux/i3c/master.h
+index 7657096ac..b8e87f2a9 100644
+--- a/include/linux/i3c/master.h
++++ b/include/linux/i3c/master.h
+@@ -498,6 +498,7 @@ struct i3c_master_controller {
+ 	struct i3c_dev_desc *this;
+ 	struct i2c_adapter i2c;
+ 	const struct i3c_master_controller_ops *ops;
++	unsigned int pec_supported : 1;
+ 	unsigned int secondary : 1;
+ 	unsigned int init_done : 1;
+ 	unsigned int jdec_spd : 1;
+-- 
+2.34.1
+

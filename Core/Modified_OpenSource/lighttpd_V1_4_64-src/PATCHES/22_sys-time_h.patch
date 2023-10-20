@@ -1,0 +1,21 @@
+diff -Naru lighttpd-1.4.64/src/sys-time.h ws/source/lighttpd_V1_4_64-13.0.0.0.0-src/data/.workspace/lighttpd/src/sys-time.h
+--- lighttpd-1.4.64/src/sys-time.h	2022-01-19 23:23:51.000000000 +0530
++++ ws/source/lighttpd_V1_4_64-13.0.0.0.0-src/data/.workspace/lighttpd/src/sys-time.h	2022-07-13 21:25:57.468956695 +0530
+@@ -30,13 +30,13 @@
+ 
+ #ifndef HAVE_TIMEGM
+ #ifdef _WIN32
+-#define timegm(tm) _mkgmtime(tm)
++#define lighttpd_timegm(tm) _mkgmtime(tm)
+ #else
+ __attribute_pure__
++static inline time_t 
++lighttpd_timegm (const struct tm * const tm);
+ static inline time_t
+-timegm (const struct tm * const tm);
+-static inline time_t
+-timegm (const struct tm * const tm)
++lighttpd_timegm (const struct tm * const tm)
+ {
+     int y = tm->tm_year + 1900;
+     int m = tm->tm_mon + 1;

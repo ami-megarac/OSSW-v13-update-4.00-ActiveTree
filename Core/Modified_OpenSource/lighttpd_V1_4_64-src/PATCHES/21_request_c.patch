@@ -1,0 +1,119 @@
+diff -Naru lighttpd-1.4.64/src/request.c ws/source/lighttpd_V1_4_64-13.0.0.0.0-src/data/.workspace/lighttpd/src/request.c
+--- lighttpd-1.4.64/src/request.c	2022-01-19 23:23:51.000000000 +0530
++++ ws/source/lighttpd_V1_4_64-13.0.0.0.0-src/data/.workspace/lighttpd/src/request.c	2022-08-02 16:34:16.808253297 +0530
+@@ -382,7 +382,8 @@
+       default:
+         break;
+       case HTTP_HEADER_HOST:
+-        if (!light_btst(r->rqst_htags, HTTP_HEADER_HOST)) {
++         // Fix for duplicate Host header issue.
++        if (!light_btst(r->rqst_htags, HTTP_HEADER_HOST) || __builtin_expect(r->rqst_htags,id)) {
+             if (vlen >= 1024) { /*(expecting < 256)*/
+                 return http_request_header_line_invalid(r, 400, "uri-authority too long -> 400");
+             }
+@@ -402,8 +403,9 @@
+       case HTTP_HEADER_IF_NONE_MATCH:
+       case HTTP_HEADER_CONTENT_TYPE:
+       case HTTP_HEADER_HTTP2_SETTINGS:
+-        if (light_btst(r->rqst_htags, id))
++        if (light_btst(r->rqst_htags, id)) {
+             return http_request_parse_duplicate(r, id, k, klen, v, vlen);
++        }
+         break;
+       case HTTP_HEADER_CONNECTION:
+         /* "Connection: close" is common case if header is present */
+@@ -847,7 +849,13 @@
+   #endif
+ 
+     r->http_method = get_http_method_key(ptr, i);
+-    if (HTTP_METHOD_UNSET >= r->http_method)
++    //AMI TODO: add condition to check singleport status
++    if( strstr(ptr,"JVIEWER") != NULL || strstr(ptr,"VMCLI") != NULL )
++    {
++        buffer_copy_string_len(&r->uri.full_uri, ptr, strlen(ptr));
++    }
++
++   if (HTTP_METHOD_UNSET >= r->http_method)
+         return http_request_header_line_invalid(r, 501, "unknown http-method -> 501");
+ 
+     const char *uri = ptr + i + 1;
+@@ -879,7 +887,7 @@
+     return 0;
+ }
+ 
+-int http_request_parse_target(request_st * const r, int scheme_port) {
++int http_request_parse_target(request_st * const r, int scheme_port, int dupped) {
+     /* URI is parsed into components at start of request and may
+      * also be re-parsed upon HANDLER_COMEBACK during the request
+      * r->target is expected to be a "/url-part?query-part"
+@@ -1143,10 +1151,12 @@
+ 
+ 
+ static int
+-http_request_parse (request_st * const restrict r, const int scheme_port)
++http_request_parse(request_st * const restrict r, const int scheme_port, int dupped)
+ {
+-    int status = http_request_parse_target(r, scheme_port);
+-    if (0 != status) return status;
++    int status = http_request_parse_target(r, scheme_port, dupped);
++    if (0 != status){
++         return status;
++    }
+ 
+     /* post-processing */
+     const unsigned int http_parseopts = r->conf.http_parseopts;
+@@ -1216,7 +1226,7 @@
+ 
+ 
+ static int
+-http_request_parse_hoff (request_st * const restrict r, char * const restrict hdrs, const unsigned short * const restrict hoff, const int scheme_port)
++http_request_parse_hoff (request_st * const restrict r, char * const restrict hdrs, const unsigned short * const restrict hoff, const int scheme_port, int dupped)
+ {
+     /*
+      * Request: "^(GET|POST|HEAD|...) ([^ ]+(\\?[^ ]+|)) (HTTP/1\\.[01])$"
+@@ -1230,10 +1240,18 @@
+     status = http_request_parse_reqline(r, hdrs, hoff, http_parseopts);
+     if (0 != status) return status;
+ 
++    if(dupped)
++    {
++        r->http_method = HTTP_METHOD_CONNECT;
++    }
++
++
+     status = http_request_parse_headers(r, hdrs, hoff, http_parseopts);
+-    if (0 != status) return status;
++    if (0 != status){
+ 
+-    return http_request_parse(r, scheme_port);
++        return status;
++    }
++    return http_request_parse(r, scheme_port, dupped);
+ }
+ 
+ 
+@@ -1264,9 +1282,9 @@
+ 
+ 
+ void
+-http_request_headers_process (request_st * const restrict r, char * const restrict hdrs, const unsigned short * const restrict hoff, const int scheme_port)
++http_request_headers_process (request_st * const restrict r, char * const restrict hdrs, const unsigned short * const restrict hoff, const int scheme_port, int dupped)
+ {
+-    r->http_status = http_request_parse_hoff(r, hdrs, hoff, scheme_port);
++    r->http_status = http_request_parse_hoff(r, hdrs, hoff, scheme_port, dupped);
+ 
+     http_request_headers_fin(r);
+ 
+@@ -1282,10 +1300,10 @@
+ 
+ 
+ void
+-http_request_headers_process_h2 (request_st * const restrict r, const int scheme_port)
++http_request_headers_process_h2 (request_st * const restrict r, const int scheme_port, int dupped)
+ {
+     if (0 == r->http_status)
+-        r->http_status = http_request_parse(r, scheme_port);
++        r->http_status = http_request_parse(r, scheme_port, dupped);
+ 
+     if (0 == r->http_status) {
+         if (light_btst(r->rqst_htags, HTTP_HEADER_CONNECTION))

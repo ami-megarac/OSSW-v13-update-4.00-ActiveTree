@@ -1,0 +1,30 @@
+--- lighttpd-1.4.64/src/h2.c	2022-01-19 23:23:51.000000000 +0530
++++ lighttpd/src/h2.c	2023-09-28 15:47:23.307858869 +0530
+@@ -1264,7 +1264,17 @@
+                 log_error(r->conf.errh, __FILE__, __LINE__,
+                   "fd:%d id:%u rqst: %.*s: %.*s", r->con->fd, r->h2id,
+                   (int)hpctx.klen, hpctx.k, (int)hpctx.vlen, hpctx.v);
+-
++            
++            if(strstr(hpctx.k, "path") != NULL)
++            {
++                char * filter = strstr(hpctx.v, "///");
++                if((hpctx.vlen > 1) &&  (filter != NULL))
++                {
++                    r->http_status = 404;
++                    r->keep_alive = 0;
++                    return;
++                }
++            }
+             const int http_status = http_request_parse_header(r, &hpctx);
+             if (__builtin_expect( (0 != http_status), 0)) {
+                 if (r->http_status == 0) /*might be set if processing trailers*/
+@@ -1328,7 +1338,7 @@
+               http_request_validate_pseudohdrs(r, hpctx.scheme,
+                                                hpctx.http_parseopts);
+         if (0 == r->http_status)
+-            http_request_headers_process_h2(r, r->con->proto_default_port);
++            http_request_headers_process_h2(r, r->con->proto_default_port,r->con->dupped );
+     }
+ }
+ 

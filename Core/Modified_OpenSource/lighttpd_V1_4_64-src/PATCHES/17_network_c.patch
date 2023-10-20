@@ -1,0 +1,421 @@
+--- lighttpd-1.4.64/src/network.c	2022-01-19 23:23:51.000000000 +0530
++++ lighttpd/src/network.c	2023-09-26 13:58:13.469418742 +0530
+@@ -21,6 +21,8 @@
+ #include <string.h>
+ #include <stdlib.h>
+ 
++extern int getsecureport(server *srv,buffer *port);
++
+ void
+ network_accept_tcp_nagle_disable (const int fd)
+ {
+@@ -76,8 +78,21 @@
+             network_accept_tcp_nagle_disable(fd);
+ 
+         connection *con = connection_accepted(srv, srv_socket, &addr, fd);
+-        if (__builtin_expect( (!con), 0)) return HANDLER_GO_ON;
++        if (__builtin_expect( (!con), 0)){
++            return HANDLER_GO_ON;
++        }
+         connection_state_machine(con);
++        handler_t r;
++        request_st * const req = &con->request;
++        switch(r = plugins_call_handle_joblist(req))
++        {
++            case HANDLER_FINISHED:
++            case HANDLER_GO_ON:
++                break;
++            default:
++                log_error(srv->errh, __FILE__, __LINE__, "d", r);
++                break;
++        }	
+     } while (--loops);
+ 
+     if (loops) {
+@@ -241,13 +256,14 @@
+     return colon ? (uint8_t)(colon - p) : (uint8_t)buffer_clen(b);
+ }
+ 
+-static int network_server_init(server *srv, network_socket_config *s, buffer *host_token, size_t sidx, int stdin_fd) {
++static int network_server_init(server *srv, network_socket_config *s, buffer *host_token, size_t sidx, int stdin_fd, char *InterfaceName) {
+ 	server_socket *srv_socket;
+ 	const char *host;
+ 	socklen_t addr_len = sizeof(sock_addr);
+ 	sock_addr addr;
+ 	int family = 0;
+ 	int set_v6only = 0;
++	buffer *port = buffer_init();
+ 
+ 	if (buffer_is_blank(host_token)) {
+ 		log_error(srv->errh, __FILE__, __LINE__,
+@@ -255,6 +271,16 @@
+ 		return -1;
+ 	}
+ 
++  if( s->ssl_enabled == 1 )
++	{
++		if ( getsecureport(srv,port) < 0 ) {
++		  if(port->ptr != NULL ) {
++			  buffer_copy_buffer( host_token, port );
++      }
++      return -1;
++		}
++	}
++
+ 	/* check if we already know this socket, and if yes, don't init it
+ 	 * (optimization: check strings here to filter out exact matches;
+ 	 *  binary addresses are matched further below) */
+@@ -266,10 +292,10 @@
+ 
+ 	host = host_token->ptr;
+ 	if ((s->use_ipv6 && (*host == '\0' || *host == ':')) || (host[0] == '[' && host[1] == ']')) {
+-		log_error(srv->errh, __FILE__, __LINE__,
++/*		log_error(srv->errh, __FILE__, __LINE__,
+ 		  "warning: please use server.use-ipv6 only for hostnames, "
+ 		  "not without server.bind / empty address; your config will "
+-		  "break if the kernel default for IPV6_V6ONLY changes");
++		  "break if the kernel default for IPV6_V6ONLY changes");*/
+ 	}
+ 	if (*host == '[') s->use_ipv6 = 1;
+ 
+@@ -285,7 +311,7 @@
+ 
+ 	family = sock_addr_get_family(&addr);
+ 
+-      #ifdef HAVE_IPV6
++#ifdef HAVE_IPV6
+ 	if (*host != '\0' && AF_INET6 == family) {
+ 		if (s->set_v6only) {
+ 			set_v6only = 1;
+@@ -298,7 +324,7 @@
+ 	if (AF_INET6 == family && -1 != s->v4mapped) { /*(configured; -1 is unset)*/
+ 		set_v6only = (s->v4mapped ? -1 : 1);
+ 	}
+-      #endif
++#endif
+ 
+ 	network_host_normalize_addr_str(host_token, &addr);
+ 	host = host_token->ptr;
+@@ -323,7 +349,7 @@
+ 	srv_socket->srv = srv;
+ 	buffer_copy_buffer((srv_socket->srv_token = buffer_init()), host_token);
+ 	srv_socket->srv_token_colon =
+-	  network_srv_token_colon(srv_socket->srv_token);
++	network_srv_token_colon(srv_socket->srv_token);
+ 
+ 	network_srv_sockets_append(srv, srv_socket);
+ 
+@@ -402,6 +428,20 @@
+ 	/* */
+ 	srv->cur_fds = srv_socket->fd;
+ 
++	if( InterfaceName != NULL ) {
++		if(strncmp(InterfaceName,"FFFFFFFFFFFFFFFF",MAX_SERVICE_IFACE_NAME_SIZE) != 0)
++		{ 
++			if(strncmp(InterfaceName,"both",strlen("both")) != 0) 
++			{
++				if(setsockopt(srv_socket->fd, SOL_SOCKET, SO_BINDTODEVICE,InterfaceName, sizeof(g_serviceconf.InterfaceName)+1) < 0) 
++				{
++					log_perror(srv->errh, __FILE__, __LINE__, "socketsockopt failed");
++					return -1;
++				}
++			}
++		}
++	}
++
+ 	if (fdevent_set_so_reuseaddr(srv_socket->fd, 1) < 0) {
+ 		log_perror(srv->errh, __FILE__, __LINE__, "setsockopt(SO_REUSEADDR)");
+ 		return -1;
+@@ -557,8 +597,13 @@
+     socklen_t addr_len;
+     sock_addr addr;
+     int rc = 0;
++    int ret = 0;
++    unsigned int IfaceCount = 0, InterfaceCount = 0;
++	  char InterfaceName[MAX_SERVICE_IFACE_NAME_SIZE+1] = {0};
++
+     nfds += 3; /* #define SD_LISTEN_FDS_START 3 */
+-    for (int fd = 3; fd < nfds; ++fd) {
++    for (int fd = 3; fd < nfds; ++fd)
++    {
+         addr_len = sizeof(sock_addr);
+         if (-1 == (rc = getsockname(fd, (struct sockaddr *)&addr, &addr_len))) {
+             log_perror(srv->errh, __FILE__, __LINE__,
+@@ -566,7 +611,77 @@
+             break;
+         }
+         network_host_normalize_addr_str(host, &addr);
+-        rc = network_server_init(srv, s, host, 0, fd);
++
++        if((strncmp(g_serviceconf.InterfaceName,"both",strlen("both")) != 0) && (g_corefeatures.automation_engine_support == ENABLED)&&(strncmp(g_serviceconf.InterfaceName,"FFFFFFFFFFFFFFFF",MAX_SERVICE_IFACE_NAME_SIZE) != 0)) 
++        {
++          InterfaceCount = 2;
++        }
++        else 
++        {
++          InterfaceCount = 1;
++        }
++        for(IfaceCount = 0 ;IfaceCount < InterfaceCount;IfaceCount++ ) 
++        {
++          memset(InterfaceName,0,sizeof(InterfaceName));
++          if(IfaceCount == 0) 
++          {
++            ret = snprintf (InterfaceName,sizeof(InterfaceName),"%s",g_serviceconf.InterfaceName);
++            if (ret < 0 || ret >= (signed)sizeof(InterfaceName)) 
++            {
++              rc = -1;
++              break;
++              // return -1;
++            }
++          }
++          else 
++          {
++            ret = snprintf (InterfaceName,sizeof(InterfaceName),"lo");
++            if (ret < 0 || ret >= (signed)sizeof(InterfaceName)) 
++            {
++              // return -1
++              rc = -1;
++              break;
++            }
++          }
++
++          rc = network_server_init(srv, s, host, 0, fd, InterfaceName); 
++          if (0 != rc )  
++          {
++            rc = -1;
++            break;
++          }
++        }
++        if ( rc != 0)
++          break;
++
++        if(g_corefeatures.ethernet_over_usb_support == ENABLED &&
++          strncmp(g_serviceconf.InterfaceName,"both",strlen("both")) != 0 &&
++          strncmp(InterfaceName,"FFFFFFFFFFFFFFFF",MAX_SERVICE_IFACE_NAME_SIZE) != 0 )	
++          {
++            rc = network_server_init(srv, s, host, 0, fd, "usb0");
++            if (0 != rc ) 
++            {
++              break;
++            }
++          }
++        if (0 != rc) break;
++        #ifdef CONFIG_SPX_FEATURE_USB_PORT_B_SUPPORT
++          if (g_corefeatures.ethernet_over_usb_support == ENABLED &&
++            strncmp(g_serviceconf.InterfaceName, "both", strlen("both")) != 0 &&
++            strncmp(InterfaceName, "FFFFFFFFFFFFFFFF", MAX_SERVICE_IFACE_NAME_SIZE) != 0)
++          {
++              struct stat sb;
++              /* Check if USB Port B is already in use by RMedia */
++              if (stat((const char *)"/tmp/port_b_hd0", &sb) == -1)
++              {
++                rc = network_server_init(srv, s, host, 0, fd, "usb1"); 
++                if (0 != rc)
++                {
++                  break;
++                }
++              }
++          }
++        #endif
+         if (0 != rc) break;
+         srv->srv_sockets.ptr[srv->srv_sockets.used-1]->sidx = (unsigned short)~0u;
+     }
+@@ -633,6 +748,11 @@
+         T_CONFIG_UNSET,
+         T_CONFIG_SCOPE_UNSET }
+     };
++	unsigned int IfaceCount = 0, InterfaceCount = 0;
++	char InterfaceName[MAX_SERVICE_IFACE_NAME_SIZE+1] = {0};
++	buffer *b;
++	uint32_t j;
++	int ret = 0;
+ 
+   #ifdef __WIN32
+     WSADATA wsaData;
+@@ -656,7 +776,8 @@
+     p->defaults.defer_accept = 0;
+     p->defaults.use_ipv6 = 0;
+     p->defaults.set_v6only = 1;
+-    p->defaults.v4mapped = -1; /*(-1 for unset; not 0 or 1)*/
++    // Enable v4mapped by default
++    p->defaults.v4mapped = 1; /*(-1 for unset; not 0 or 1)*/
+ 
+     /* initialize p->defaults from global config context */
+     if (p->nconfig > 0 && p->cvlist->v.u2[1]) {
+@@ -685,7 +806,7 @@
+             buffer_copy_buffer(b, srv->srvconf.bindhost);
+             /*assert(buffer_eq_slen(b, CONST_STR_LEN("/dev/stdin")));*/
+             rc = (0 == srv->srv_sockets.used)
+-              ? network_server_init(srv, &p->defaults, b, 0, stdin_fd)
++              ? network_server_init(srv, &p->defaults, b, 0, stdin_fd, NULL)
+               : close(stdin_fd);/*(graceful restart listening to "/dev/stdin")*/
+             buffer_free(b);
+             if (0 != rc) break;
+@@ -710,8 +831,74 @@
+                 break;
+             }
+ 
++
++            if((strncmp(g_serviceconf.InterfaceName,"both",strlen("both")) != 0) && (g_corefeatures.automation_engine_support == ENABLED)&&(strncmp(g_serviceconf.InterfaceName,"FFFFFFFFFFFFFFFF",MAX_SERVICE_IFACE_NAME_SIZE) != 0)) 
++            {
++              InterfaceCount = 2;
++            }
++            else 
++            {
++              InterfaceCount = 1;
++            }
++
+             if (cfginfo.cond == CONFIG_COND_EQ) {
+-                rc = network_server_init(srv, &p->conf, host_token, i, -1);
++                for(IfaceCount = 0 ;IfaceCount < InterfaceCount;IfaceCount++ ) 
++                  {
++                    memset(InterfaceName,0,sizeof(InterfaceName));
++                    if(IfaceCount == 0) 
++                    {
++                      ret = snprintf (InterfaceName,sizeof(InterfaceName),"%s",g_serviceconf.InterfaceName);
++                      if (ret < 0 || ret >= (signed)sizeof(InterfaceName)) 
++                      {
++                        return -1;
++                      }
++                    }
++                    else 
++                    {
++                      ret = snprintf (InterfaceName,sizeof(InterfaceName),"lo");
++                      if (ret < 0 || ret >= (signed)sizeof(InterfaceName)) 
++                      {
++                        return -1;
++                      }
++                    }
++
++                    rc = network_server_init(srv, &p->conf, host_token, i, -1 ,InterfaceName);
++                    if (0 != rc )  
++                    {
++                      break;
++                    }
++                  }
++
++                  if(g_corefeatures.ethernet_over_usb_support == ENABLED &&
++                    strncmp(g_serviceconf.InterfaceName,"both",strlen("both")) != 0 &&
++                    strncmp(InterfaceName,"FFFFFFFFFFFFFFFF",MAX_SERVICE_IFACE_NAME_SIZE) != 0 )	
++                  {
++                    rc = network_server_init(srv, &p->conf, host_token, i, -1 , "usb0");
++                    if (0 != rc ) 
++                    {
++                      break;
++                    }
++                  }
++            #ifdef CONFIG_SPX_FEATURE_USB_PORT_B_SUPPORT
++                    if (g_corefeatures.ethernet_over_usb_support == ENABLED &&
++                      strncmp(g_serviceconf.InterfaceName, "both", strlen("both")) != 0 &&
++                      strncmp(InterfaceName, "FFFFFFFFFFFFFFFF", MAX_SERVICE_IFACE_NAME_SIZE) != 0)
++                    {
++                      struct stat sb;
++                      /* Check if USB Port B is already in use by RMedia */
++                      if (stat((const char *)"/tmp/port_b_hd0", &sb) == -1)
++                      {
++
++                        rc = network_server_init(srv, &p->conf, host_token, i, -1, "usb1" );
++                        if (0 != rc)
++                        {
++                          break;
++                          
++                        }
++                      }
++                    }
++            #endif
++
+                 if (0 != rc) break;
+             }
+             else if (cfginfo.cond == CONFIG_COND_NE) {
+@@ -733,8 +920,7 @@
+          * can then be overridden.  (bindhost = "/dev/stdin" is handled above)
+          * (skip if systemd socket activation is enabled and bindhost is empty;
+          *  do not additionally listen on "*") */
+-        if ((!srv->srvconf.systemd_socket_activation || srv->srvconf.bindhost)
+-            && -1 == stdin_fd) {
++        if ( (!srv->srvconf.systemd_socket_activation || srv->srvconf.bindhost) && -1 == stdin_fd) {
+             buffer *b = buffer_init();
+             if (srv->srvconf.bindhost)
+                 buffer_copy_buffer(b, srv->srvconf.bindhost);
+@@ -747,9 +933,72 @@
+             force_assert(b->ptr);
+           #endif
+ 
+-            rc = network_server_init(srv, &p->defaults, b, 0, -1);
++            for(IfaceCount = 0 ;IfaceCount < InterfaceCount;IfaceCount++ ) 
++            {
++              memset(InterfaceName,0,sizeof(InterfaceName));
++              if(IfaceCount == 0) 
++              {
++                ret = snprintf (InterfaceName,sizeof(InterfaceName),"%s",g_serviceconf.InterfaceName);
++                if (ret < 0 || ret >= (signed)sizeof(InterfaceName)) 
++                {
++                  // return -1;
++                  rc = -1;
++                  break;
++                }
++              }
++              else 
++              {
++                ret = snprintf (InterfaceName,sizeof(InterfaceName),"lo");
++                if (ret < 0 || ret >= (signed)sizeof(InterfaceName)) 
++                {
++                  //  return -1;
++                  rc = -1;
++                  break;
++                }
++              }
++
++              rc = network_server_init(srv, &p->defaults, b, 0, -1 ,InterfaceName);
++            }
++            if (0 != rc ){
++              if ( b != NULL ){
++                buffer_free(b);
++                b = NULL;
++              }
++              break;
++            }
++            if(g_corefeatures.ethernet_over_usb_support == ENABLED &&
++                    strncmp(g_serviceconf.InterfaceName,"both",strlen("both")) != 0 &&
++                    strncmp(InterfaceName,"FFFFFFFFFFFFFFFF",MAX_SERVICE_IFACE_NAME_SIZE) != 0 )	
++                  {
++                    rc = network_server_init(srv, &p->defaults, b, 0, -1 , "usb0");
++                  }
++                  if (0 != rc ){
++                    if ( b != NULL ){
++                      buffer_free(b);
++                      b = NULL;
++                   }
++                   break;
++            }
++            #ifdef CONFIG_SPX_FEATURE_USB_PORT_B_SUPPORT
++                    if (g_corefeatures.ethernet_over_usb_support == ENABLED &&
++                      strncmp(g_serviceconf.InterfaceName, "both", strlen("both")) != 0 &&
++                      strncmp(InterfaceName, "FFFFFFFFFFFFFFFF", MAX_SERVICE_IFACE_NAME_SIZE) != 0)
++                    {
++                      struct stat sb;
++                      /* Check if USB Port B is already in use by RMedia */
++                      if (stat((const char *)"/tmp/port_b_hd0", &sb) == -1)
++                      {
++                        rc= network_server_init(srv, &p->defaults, b, 0, -1, "usb1" );
++                      }
++                    }
++            #endif
++        }
++        if (0 != rc ){
++          if ( b != NULL ){
+             buffer_free(b);
+-            if (0 != rc) break;
++            b = NULL;
++          }
++          break;
+         }
+ 
+         if (srv->srvconf.systemd_socket_activation) {
+@@ -803,3 +1052,6 @@
+ 	}
+ 	return 0;
+ }
++
++
++

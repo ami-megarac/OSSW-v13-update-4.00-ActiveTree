@@ -1,0 +1,12 @@
+diff -Naru lighttpd-1.4.64/src/buffer.h ws/source/lighttpd_V1_4_64-13.0.0.0.0-src/data/.workspace/lighttpd/src/buffer.h
+--- lighttpd-1.4.64/src/buffer.h	2022-01-19 23:23:51.000000000 +0530
++++ ws/source/lighttpd_V1_4_64-13.0.0.0.0-src/data/.workspace/lighttpd/src/buffer.h	2022-07-14 17:23:18.975495362 +0530
+@@ -400,6 +400,8 @@
+ #define force_assert(x) ck_assert(x)
+ #define log_failed_assert(file,line,msg) ck_bt_abort((file),(line),(msg))
+ #define SEGFAULT() ck_bt_abort(__FILE__, __LINE__, "aborted")
++int buffer_append_memory(buffer *b, const char *s, size_t s_len);
++int buffer_prepare_append(buffer *b, size_t size);
+ 
+ 
+ #endif

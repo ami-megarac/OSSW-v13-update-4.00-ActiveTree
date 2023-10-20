@@ -1,0 +1,67 @@
+diff -Naru lighttpd-1.4.64/src/keyvalue.c ws/source/lighttpd_V1_4_64-13.0.0.0.0-src/data/.workspace/lighttpd/src/keyvalue.c
+--- lighttpd-1.4.64/src/keyvalue.c	2022-01-19 23:23:51.000000000 +0530
++++ ws/source/lighttpd_V1_4_64-13.0.0.0.0-src/data/.workspace/lighttpd/src/keyvalue.c	2022-07-13 21:25:57.432957247 +0530
+@@ -396,6 +396,35 @@
+ 	buffer_append_string_len(b, pattern + start, pattern_len - start);
+ }
+ 
++
++// int get_port_https (server *srv, int *port)
++// {
++// 	int i=0;
++// 	for (i = 1; i < srv->config_context->used; i++)
++// 	{
++// 		data_config *dc = (data_config *)srv->config_context->data[i];
++// 		specific_config *s = srv->config_storage[i];
++// 		size_t j;
++
++// 		/* not our stage */
++// 		if (COMP_SERVER_SOCKET != dc->comp)
++// 			continue;
++// 		/* check if we already know this socket,
++// 		* if yes, don't init it */
++// 		for (j = 0; j < srv->srv_sockets.used; j++)
++// 		{
++// 			if (buffer_is_equal(srv->srv_sockets.ptr[j]->srv_token, dc->string))
++// 			{
++// 				break;	
++// 			}
++// 		}
++// 		*port = strtol (dc->string->ptr+1,NULL,10);
++// 		printf("\n *port %d \n", *port);fflush(stdout);
++// 	}
++// 	return 0;
++// }
++
++
+ handler_t pcre_keyvalue_buffer_process(const pcre_keyvalue_buffer *kvb, pcre_keyvalue_ctx *ctx, const buffer *input, buffer *result) {
+     const pcre_keyvalue *kv = kvb->kv;
+     for (int i = 0, used = (int)kvb->used; i < used; ++i, ++kv) {
+@@ -409,6 +438,27 @@
+         int n = pcre_exec(kv->key, kv->key_extra, BUF_PTR_LEN(input),
+                           0, 0, ovec, sizeof(ovec)/sizeof(int));
+       #endif
++        //AMI TODO: Get port value without using server structure.
++        // get_port_https (srv, &port);
++        // printf("\n port %d \n", ctx->burl->port );
++        // if(port != 443) {
++        //   buffer_reset(&(kv->value));
++        //   buffer_copy_string(&(kv->value), "https://%1:");
++        //   buffer_append_int(&(kv->value), port);
++        //   buffer_append_strint(&(kv->value),"$1");
++        // }
++        // if(srv->srvconf.port == 80 && port != 443) {
++        //   buffer_reset(&(kv->value));
++        //   buffer_copy_string(&(kv->value), "https://%0:");
++        //   buffer_append_int(&(kv->value), port);
++        //   buffer_append_strint(&(kv->value),"$0");
++        // }
++        // if(srv->srvconf.port == 80 && port == 443) {
++        //   buffer_reset(&(kv->value));
++        //   buffer_copy_string(&(kv->value), "https://%0:");
++        //   buffer_append_int(&(kv->value), 443);
++        //   buffer_append_strint(&(kv->value),"$0");
++        // }
+         if (n < 0) {
+           #ifdef HAVE_PCRE2_H
+             if (n != PCRE2_ERROR_NOMATCH)

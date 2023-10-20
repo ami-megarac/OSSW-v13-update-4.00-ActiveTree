@@ -1,0 +1,39 @@
+diff -Naru lighttpd-1.4.64/src/base.h ws/source/lighttpd_V1_4_64-13.0.0.0.0-src/data/.workspace/lighttpd/src/base.h
+--- lighttpd-1.4.64/src/base.h	2022-01-19 23:23:51.000000000 +0530
++++ ws/source/lighttpd_V1_4_64-13.0.0.0.0-src/data/.workspace/lighttpd/src/base.h	2022-08-02 16:28:35.184906732 +0530
+@@ -11,7 +11,7 @@
+ #include "http_kv.h"
+ #include "request.h"
+ #include "sock_addr.h"
+-
++#include <openssl/ssl.h>
+ struct fdevents;        /* declaration */
+ struct server_socket;   /* declaration */
+ 
+@@ -20,15 +20,17 @@
+ 
+ 	request_st request;
+ 	h2con *h2;
+-
++	SSL *ssl;
+ 	int fd;                      /* the FD for this connection */
+ 	fdnode *fdn;                 /* fdevent (fdnode *) object */
+ 	connection *jqnext;
++	int plugin_connection;
+ 
+ 	/* fd states */
+ 	signed char is_readable;
+ 	signed char is_writable;
+ 	char is_ssl_sock;
++	int dupped;			/* used to indicate SSL socket dup */
+ 	char traffic_limit_reached;
+ 	uint16_t revents_err;
+ 	uint16_t proto_default_port;
+@@ -121,6 +123,7 @@
+ 	array *modules;
+ 	array *config_touched;
+ 	array empty_array;
++	unsigned int ssl_enabled;
+ } server_config;
+ 
+ typedef struct server_socket {

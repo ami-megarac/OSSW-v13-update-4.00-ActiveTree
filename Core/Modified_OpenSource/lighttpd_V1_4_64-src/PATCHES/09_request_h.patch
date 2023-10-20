@@ -1,0 +1,37 @@
+diff -Naru lighttpd-1.4.64/src/request.h ws/source/lighttpd_V1_4_64-13.0.0.0.0-src/data/.workspace/lighttpd/src/request.h
+--- lighttpd-1.4.64/src/request.h	2022-01-19 23:23:51.000000000 +0530
++++ ws/source/lighttpd_V1_4_64-13.0.0.0.0-src/data/.workspace/lighttpd/src/request.h	2022-08-02 15:44:13.881673936 +0530
+@@ -86,6 +86,7 @@
+     /* path including leading slash ("/" or "/index.html") - urldecoded, and sanitized  ( buffer_path_simplify() && buffer_urldecode_path() ) */
+     buffer path;
+     buffer query; /* querystring ( everything after "?", ie: in "/index.php?foo=1", query is "foo=1" ) */
++    buffer full_uri;
+ } request_uri;
+ 
+ typedef struct {
+@@ -115,7 +116,11 @@
+     CON_STATE_WRITE,
+     CON_STATE_RESPONSE_END,
+     CON_STATE_ERROR,
+-    CON_STATE_CLOSE
++    CON_STATE_CLOSE,
++    CON_STATE_READ_CONTINUOUS,
++#ifdef CONFIG_SPX_FEATURE_WEB_APP_PROXY
++	CON_STATE_READ_CONTINUOUS_WEB_APP_PROXY
++#endif
+ } request_state_t;
+ 
+ struct request_st {
+@@ -213,9 +218,9 @@
+ 
+ int http_request_validate_pseudohdrs (request_st * restrict r, int scheme, unsigned int http_parseopts);
+ int http_request_parse_header (request_st * restrict r, http_header_parse_ctx * restrict hpctx);
+-void http_request_headers_process_h2 (request_st * restrict r, int scheme_port);
+-void http_request_headers_process (request_st * restrict r, char * restrict hdrs, const unsigned short * restrict hoff, int scheme_port);
+-int http_request_parse_target(request_st *r, int scheme_port);
++void http_request_headers_process_h2 (request_st * restrict r, int scheme_port, int dupped);
++void http_request_headers_process (request_st * restrict r, char * restrict hdrs, const unsigned short * restrict hoff, int scheme_port, int dupped);
++int http_request_parse_target(request_st *r, int scheme_port, int dupped);
+ int http_request_host_normalize(buffer *b, int scheme_port);
+ int http_request_host_policy(buffer *b, unsigned int http_parseopts, int scheme_port);
+ 

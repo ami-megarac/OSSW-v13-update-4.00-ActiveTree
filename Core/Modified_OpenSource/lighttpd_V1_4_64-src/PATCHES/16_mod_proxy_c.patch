@@ -1,0 +1,96 @@
+--- lighttpd_with_patch_0831_ori_00/src/mod_proxy.c	2023-08-31 19:15:16.625210350 +0800
++++ lighttpd_with_patch_0831_ori_02/src/mod_proxy.c	2023-08-31 18:44:31.012347899 +0800
+@@ -610,6 +610,63 @@
+     buffer_commit(b, j);
+ }
+
++static void proxy_add_server_addr_header(connection *con, request_st * const r){
++	server_socket *srv_sock = con->srv_socket;
++	const char *s;
++	char buf[LI_ITOSTRING_LENGTH];
++#ifdef HAVE_IPV6
++	char b2[INET6_ADDRSTRLEN + 1];
++#endif
++	sock_addr *addr;
++	sock_addr addrbuf;
++
++	addr = &srv_sock->addr;
++	switch (addr->plain.sa_family) {
++#ifdef HAVE_IPV6
++		case AF_INET6:
++			if (0 ==memcmp(&addr->ipv6.sin6_addr,&in6addr_any,sizeof(in6addr_any))){
++				socklen_t addrlen = sizeof(addrbuf);
++				if (0 == getsockname(con->fd,(struct sockaddr *)&addrbuf,&addrlen)){
++					addr = &addrbuf;
++				} else {
++					s = "";
++					break;
++				}
++			}
++			s = inet_ntop(AF_INET6, (const void *) &(addr->ipv6.sin6_addr),
++					b2, sizeof(b2)-1);
++			break;
++#endif
++		case AF_INET:
++			if (srv_sock->addr.ipv4.sin_addr.s_addr == INADDR_ANY) {
++				socklen_t addrlen = sizeof(addrbuf);
++				if (0 == getsockname(con->fd,(struct sockaddr *)&addrbuf,&addrlen)){
++					addr = &addrbuf;
++				} else {
++					s = "";
++					break;
++				}
++			}
++#ifdef HAVE_IPV6
++			s = inet_ntop(AF_INET, (const void *) &(addr->ipv4.sin_addr),
++					b2, sizeof(b2)-1);
++#else
++			s = inet_ntoa(addr->ipv4.sin_addr);
++#endif
++			break;
++		default:
++			s = "";
++			break;
++	}
++	force_assert(s);
++
++    if (s != NULL) {
++        http_header_request_set(r, HTTP_HEADER_OTHER,
++                                CONST_STR_LEN("X-Server-Addr"),
++                                s, strlen(s));
++    }
++}
++
+ static void proxy_set_Forwarded(connection * const con, request_st * const r, const unsigned int flags) {
+     buffer *b = NULL, *efor = NULL, *eproto = NULL, *ehost = NULL;
+     int semicolon = 0;
+@@ -795,6 +852,21 @@
+     http_header_request_set(r, HTTP_HEADER_X_FORWARDED_PROTO,
+                             CONST_STR_LEN("X-Forwarded-Proto"),
+                             BUF_PTR_LEN(b));
++
++#ifdef CONFIG_SPX_FEATURE_REDFISH_ENABLED
++    const buffer *key_ds = http_header_env_get(r, CONST_STR_LEN("SSL_CLIENT_CERT"));
++    if (key_ds != NULL) {
++	for (char* p = key_ds->ptr; p = strchr(p, '\n'); ++p) {
++		*p = '\\';
++	}
++	http_header_request_set(r, HTTP_HEADER_OTHER, CONST_STR_LEN("X-Client-Certificate"), BUF_PTR_LEN(key_ds));
++    }
++    const buffer *key_ds_user = http_header_env_get(r, CONST_STR_LEN("REMOTE_USER"));
++    if (key_ds != NULL) {
++		http_header_request_set(r,HTTP_HEADER_OTHER, CONST_STR_LEN("X-Username"),  BUF_PTR_LEN(key_ds_user));
++    }
++#endif
++    proxy_add_server_addr_header(con, r);
+ }
+ 
+ 
+@@ -1140,6 +1212,7 @@
+ 	p->handle_subrequest       = gw_handle_subrequest;
+ 	p->handle_trigger          = gw_handle_trigger;
+ 	p->handle_waitpid          = gw_handle_waitpid_cb;
++	p->handle_joblist          = gw_handle_joblist;
+ 
+ 	return 0;
+ }

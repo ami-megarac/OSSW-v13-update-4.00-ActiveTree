@@ -1,0 +1,124 @@
+--- lighttpd-1.4.64/src/response.c	2022-01-19 23:23:51.000000000 +0530
++++ lighttpd/src/response.c	2023-10-07 18:31:33.842665946 +0530
+@@ -335,7 +335,15 @@
+ __attribute_cold__
+ static handler_t http_response_prepare_connect (request_st * const r) {
+     return (r->handler_module)
+-      ? HANDLER_GO_ON
++//     HANDLER_GO_ON is returned in most of the cases when you want another plugin to have a chance to touch the request too. If you know that this request is not for you, just return HANDLER_GO_ON and you are done.
++
++// HANDLER_ERROR should only be called if something fatal happens as it terminates the current connection if called in one of the handlers or terminates lighttpd if called in _set_defaults.
++
++// HANDLER_FINISHED is the final return-code used to signal that everything is ready to serve the request like
++    //   ? HANDLER_GO_ON
++    //AMI TODO: validate this changes *** Important
++       // ? HANDLER_FINISHED
++	? HANDLER_GO_ON
+       : http_status_set_error_close(r, 405);/* 405 Method Not Allowed */
+ }
+ 
+@@ -368,7 +376,7 @@
+ 
+ __attribute_noinline__
+ static handler_t
+-http_response_prepare (request_st * const r)
++http_response_prepare (request_st * const r,connection * const con)
+ {
+     handler_t rc;
+ 
+@@ -378,7 +386,11 @@
+ 			http_response_body_clear(r, 0);
+ 		return HANDLER_FINISHED;
+ 	}
+-
++	if (con->request.http_method == HTTP_METHOD_CONNECT) {
++        	// r->http_status = 403;
++        	r->http_status = 200;
++		return  HANDLER_FINISHED;
++	}
+ 	/* no decision yet, build conf->filename */
+ 	if (buffer_is_unset(&r->physical.path)) {
+ 
+@@ -551,7 +563,7 @@
+ 
+ __attribute_cold__
+ __attribute_noinline__
+-static handler_t http_response_comeback (request_st * const r)
++static handler_t http_response_comeback (request_st * const r, int dupped)
+ {
+     if (NULL != r->handler_module || !buffer_is_unset(&r->physical.path))
+         return HANDLER_GO_ON;
+@@ -563,7 +575,7 @@
+     else /*(buffer_blank(&r->uri.authority) w/o code inline)*/
+         buffer_copy_string_len(&r->uri.authority, CONST_STR_LEN(""));
+ 
+-    int status = http_request_parse_target(r, r->con->proto_default_port);
++    int status = http_request_parse_target(r, r->con->proto_default_port, dupped);
+     if (0 == status) {
+         r->conditional_is_valid = (1 << COMP_SERVER_SOCKET)
+                                 | (1 << COMP_HTTP_SCHEME)
+@@ -748,6 +760,12 @@
+         return HANDLER_ERROR;
+     }
+ 
++    /* set content length for JViewer response*/
++    const buffer *vb = http_header_request_get(r, HTTP_HEADER_USER_AGENT, CONST_STR_LEN("User-Agent"));
++    if ((vb && 0 == strncmp(vb->ptr, "JViewer", sizeof("JViewer")-1)) || (vb && 0 == strncmp(vb->ptr, "VMCLI", sizeof("VMCLI")-1))) {
++        r->resp_body_finished = 1;
++    }
++
+     if (r->resp_body_finished) {
+         /* check for Range request (current impl requires resp_body_finished) */
+         if (r->conf.range_requests && http_range_rfc7233(r) >= 400)
+@@ -947,24 +965,31 @@
+ 
+ 
+ handler_t
+-http_response_handler (request_st * const r)
++http_response_handler (request_st * const r, connection * const con)
+ {
+   int rc;
+   do {
+     const plugin *p = r->handler_module;
+     if (NULL != p
+-        || ((rc = http_response_prepare(r)) == HANDLER_GO_ON
++        || ((rc = http_response_prepare(r,con)) == HANDLER_GO_ON
+             && NULL != (p = r->handler_module)))
+         rc = p->handle_subrequest(r, p->data);
+ 
+     switch (rc) {
+       case HANDLER_WAIT_FOR_EVENT:
++        if(con->dupped == 1)
++		{
++			r->keep_alive = 0;
++			r->http_status = 200;
++			connection_close(con);
++		}
+         if (!r->resp_body_finished
+             && (!r->resp_body_started
+                 || 0 == (r->conf.stream_response_body
+                          & (FDEVENT_STREAM_RESPONSE
+-                           |FDEVENT_STREAM_RESPONSE_BUFMIN))))
++                           |FDEVENT_STREAM_RESPONSE_BUFMIN)))) {
+             return HANDLER_WAIT_FOR_EVENT; /* come back here */
++        }
+         /* response headers received from backend; start response */
+         __attribute_fallthrough__
+       case HANDLER_GO_ON:
+@@ -972,13 +997,14 @@
+         if (r->http_status == 0) r->http_status = 200;
+         if ((__builtin_expect( (r->http_status < 400), 1)
+              && __builtin_expect( (0 == r->error_handler_saved_status), 1))
+-            || __builtin_expect( (!http_response_has_error_handler(r)), 1))
++            || __builtin_expect( (!http_response_has_error_handler(r)), 1)) {
+             /* we have something to send; go on */
+             /*(CON_STATE_RESPONSE_START; transient state)*/
+             return http_response_write_prepare(r);
++            }
+         __attribute_fallthrough__
+       case HANDLER_COMEBACK:
+-        http_response_comeback(r);
++        http_response_comeback(r, con->dupped);
+         rc = HANDLER_COMEBACK;
+         continue;
+       /*case HANDLER_ERROR:*/
