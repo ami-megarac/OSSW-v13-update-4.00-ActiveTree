@@ -5,7 +5,7 @@ Format: 3.0 (quilt)
 Source: systemd
 Binary: systemd, systemd-sysv, systemd-container, systemd-journal-remote, systemd-coredump, systemd-timesyncd, systemd-tests, libpam-systemd, libnss-myhostname, libnss-mymachines, libnss-resolve, libnss-systemd, libsystemd0, libsystemd-dev, udev, libudev1, libudev-dev, udev-udeb, libudev1-udeb
 Architecture: linux-any
-Version: 247.3-7+deb11u2
+Version: 247.3-7+deb11u4
 Maintainer: Debian systemd Maintainers <pkg-systemd-maintainers@lists.alioth.debian.org>
 Uploaders: Michael Biebl <biebl@debian.org>, Marco d'Itri <md@linux.it>, Sjoerd Simons <sjoerd@debian.org>, Martin Pitt <mpitt@debian.org>, Felipe Sateler <fsateler@debian.org>
 Homepage: https://www.freedesktop.org/wiki/Software/systemd
@@ -37,28 +37,28 @@ Package-List:
  udev-udeb udeb debian-installer optional arch=linux-any profile=!noudeb
 Checksums-Sha1:
  9bad8622d0198406e6570ca7c54de0eac47e468e 9895385 systemd_247.3.orig.tar.gz
- fdb0670dd927d40aefb3a096f8743e7445c46756 192860 systemd_247.3-7+deb11u2.debian.tar.xz
+ 06ea0f82b9b154c3be5415e785439ac551003419 196116 systemd_247.3-7+deb11u4.debian.tar.xz
 Checksums-Sha256:
  2869986e219a8dfc96cc0dffac66e0c13bb70a89e16b85a3948876c146cfa3e0 9895385 systemd_247.3.orig.tar.gz
- 27842e6f36805b6147b6c91bf31e51e2353cdeb3f7c5076fa8ba4b43e7ce582f 192860 systemd_247.3-7+deb11u2.debian.tar.xz
+ d1641185f547643cc2788606f209c57a9d66bd9f646564959a2680a7da1e2234 196116 systemd_247.3-7+deb11u4.debian.tar.xz
 Files:
  5be57c584847b161c67577f2d997903a 9895385 systemd_247.3.orig.tar.gz
- 40aca0dfcc4c5da585c0dade60a6552b 192860 systemd_247.3-7+deb11u2.debian.tar.xz
+ c42c689d588cbf3b5e28ca29daffa909 196116 systemd_247.3-7+deb11u4.debian.tar.xz
 
 -----BEGIN PGP SIGNATURE-----
 
-iQJFBAEBCgAvFiEErCSqx93EIPGOymuRKGv37813JB4FAmQpdKYRHGJsdWNhQGRl
-Ymlhbi5vcmcACgkQKGv37813JB7fTA//UgvsSC9/IoZbi3tCN+5z2d8KWLQHHdYH
-d9W5BGxxmwXwtWfsNyxPNxMwkvapwzvvWe5KJj9xmplSmHKDXBTD1rG+1uXpPjil
-raNwcukxp1dIiB9TaHh7r31I5Qe48t0jWsJfL7mIJoLwNk4qJRigCzlDFnHzCfqm
-LbCFkIWxiJRKVMD/s9OG7h9Gprc9390gY9Mt0cUyC505S5L3g2aLsbSY31h/lIX4
-PvgBJpPN1s1RF054mvqoo4+R6swNafpWLX4rhzOMWf0jra/nrBeRrdOOz4RRBttV
-kXmwd8RfDFMPbYYURgO05xxYLMk6iciitLLA6Oj+6lAXYJ0t/BXLNfkpsrgQVv8L
-cPLrNp5FEbrXvCctRZca1HN0O7iZGGlIKvkTl5mXLjz7R7kPGXC19ahwBVe6j+TI
-ufC4jrPjqEfxmhS4DarGN5I8f3EqGYDPpHUV19dQIP4NVrolzGbIWiIJZHdL3X0L
-2+66pPUzRKcYo4uAHj7T199dPNOn8vEUOvdsjcUNmeyc3gDubezxwvVoZlQ/ERux
-5yaxf5bLagbaaoaCfwosXKDatlSIhCmCfAs/EV4x2rwyO+jRMJuvFvg2mv7ne4Gx
-pUHttkRjqhDXAIkpHHV7xnScTVJ7qoXSN8FEAA7SaWQrtUZGeKOi4yg/1UqMvwrf
-AHQDKKp7LHo=
-=omky
+iQJFBAEBCgAvFiEErCSqx93EIPGOymuRKGv37813JB4FAmSPGx0RHGJsdWNhQGRl
+Ymlhbi5vcmcACgkQKGv37813JB6JlQ//QeiJgtEtW6glTfosbBhyY++UR+Hx0tQt
+pyot2fW/OGLnBJrSktmOI4GuRfAqMIP449DrJcVusxBH6MQpLaMLw+BqfqilvFjC
+WNFV4cvvCMKiiV9AapF8Je1m9XUBJMKhdJE4sK/9sgZkCLB0ppYDqSChtc0qZ/mi
+9SxaJ93t8kYHqKo8J0DWTdRv2apMiTBQA0iln9G0FUMMKHRDImrvSyklqu2wwHPt
+7FdlO+kC87gB6ZoUd2zoIsomdj9/VVhdpGTMVV+rA58ujW22xTeefuBaKmy564wW
+ztw94n6c2Sl3ieirkD7Cw7zcoHN7FdAbcTqSL//RmB8lvtIRp7wwME+HxkUk81OE
+oc9Lw7BI+8PcEbnZ1wYUtxdaMpH9sKhpg5SXstGbBg263+IvxZK+e33Z9/F5Kxnq
+FvgT1TLHZJcYWHXjZBEY4VaeztZNLa26hYia6gkVr+Rp7D85UF03YOIhjNoG92s1
+4GCbRzyFpwhAyMNDmQyF66afkLmhp87SKgbnIRH5y5nBkQB+jUD0Z1iSIqsezpEn
+mkz0oJhIXVbYJMCWZ1xbiGpqTdg5CXa5zFgDzeErWAAhYuNWFsqSZzfQNVTn69nH
+DbDLUAf6AN88llkKRMU0tEExiaVuxRNVaF/H1wBvez0P9TEbag1ucwnoDJtCiFSH
+10CQr7xPMLo=
+=Xt7F
 -----END PGP SIGNATURE-----
